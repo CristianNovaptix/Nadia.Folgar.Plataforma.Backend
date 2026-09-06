@@ -55,7 +55,7 @@ Para cada movimiento:
 - "fecha": tal como aparece impresa (no normalices el formato).
 - "concepto": la descripción completa del movimiento (puede incluir varias líneas de detalle).
 - "monto": siempre positivo — el signo lo indica el campo "tipo".
-- "tipo": "debito" si el monto está en la columna Débito, "credito" si está en la columna Crédito. Si el extracto no distingue columnas de débito/crédito, usá null.
+- "tipo": "debito" si el monto está en la columna Débito, "credito" si está en la columna Crédito — prestá especial atención acá, es un error común confundir la columna. Si el extracto imprime un saldo corrido por fila ("saldoDespues"), usalo para verificarte: un crédito SUMA al saldo anterior, un débito RESTA: si tu elección de "tipo" no es consistente con cómo cambió el saldo de la fila anterior a esta, revisá de nuevo cuál columna es. Si el extracto no distingue columnas de débito/crédito, usá null.
 - "numeroComprobante": el número de comprobante/operación si el extracto lo imprime, si no null.
 - "saldoDespues": el saldo en cuenta que el extracto declara para ESA fila específica (columna "Saldo" o "Saldo en cuenta"), si el banco lo imprime línea por línea. Si el banco no imprime un saldo corrido por fila, usá null — no lo calcules vos.
 

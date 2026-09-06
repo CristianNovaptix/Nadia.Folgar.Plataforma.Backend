@@ -23,6 +23,10 @@ function signedDelta(mov: { monto: number; tipo?: TipoMovimiento }): number {
   return mov.monto;
 }
 
+function tipoOpuesto(tipo: TipoMovimiento): TipoMovimiento {
+  return tipo === TipoMovimiento.DEBITO ? TipoMovimiento.CREDITO : TipoMovimiento.DEBITO;
+}
+
 function redondear(valor: number): number {
   return Math.round(valor * 100) / 100;
 }
@@ -64,20 +68,55 @@ export function construirMovimientosConValidacion(
   let saldoAncla = saldoInicialDeclarado;
 
   return movimientos.map((mov) => {
+    if (saldoAncla === undefined) {
+      return {
+        fecha: mov.fecha,
+        concepto: mov.concepto,
+        monto: mov.monto,
+        tipo: mov.tipo,
+        numeroComprobante: mov.numeroComprobante,
+        saldoDeclarado: mov.saldoDeclarado,
+        validacionSaldo: ValidacionSaldo.NO_APLICA,
+      };
+    }
+
+    // Bug real reportado por el usuario: la IA a veces lee la columna
+    // Débito/Crédito al revés (transcribe un crédito como débito, o
+    // viceversa) mientras el monto en sí está bien. Cuando el banco imprime
+    // el saldo corrido de ESTA fila (`saldoDeclarado`), ese dato es
+    // ground-truth — si invertir "tipo" hace que el saldo calculado
+    // coincida (la diferencia contra el original es exactamente el doble
+    // del monto, porque invertir el signo de un delta lo mueve 2x), es
+    // prácticamente seguro que se trata de este bug específico y no de un
+    // monto mal transcripto. Se corrige solo acá en vez de dejarlo como
+    // "Diferencia" para que el contador tenga que arreglarlo a mano — la
+    // validación de saldo ya es la autoridad determinística por sobre lo
+    // que dijo la IA (ver el comentario de `construirMovimientosConValidacion`
+    // más arriba), esto es una extensión directa de esa misma idea.
+    let tipo = mov.tipo;
+    let saldoCalculado = redondear(saldoAncla + signedDelta({ ...mov, tipo }));
+
+    if (mov.saldoDeclarado !== undefined && tipo !== undefined) {
+      const diferenciaOriginal = redondear(mov.saldoDeclarado - saldoCalculado);
+      const yaOk = Math.abs(diferenciaOriginal) <= TOLERANCIA_SALDO;
+      const pareceTipoInvertido =
+        !yaOk &&
+        Math.abs(Math.abs(diferenciaOriginal) - 2 * Math.abs(mov.monto)) <= TOLERANCIA_SALDO;
+
+      if (pareceTipoInvertido) {
+        tipo = tipoOpuesto(tipo);
+        saldoCalculado = redondear(saldoAncla + signedDelta({ ...mov, tipo }));
+      }
+    }
+
     const base = {
       fecha: mov.fecha,
       concepto: mov.concepto,
       monto: mov.monto,
-      tipo: mov.tipo,
+      tipo,
       numeroComprobante: mov.numeroComprobante,
       saldoDeclarado: mov.saldoDeclarado,
     };
-
-    if (saldoAncla === undefined) {
-      return { ...base, validacionSaldo: ValidacionSaldo.NO_APLICA };
-    }
-
-    const saldoCalculado = redondear(saldoAncla + signedDelta(mov));
 
     if (mov.saldoDeclarado === undefined) {
       saldoAncla = saldoCalculado;

@@ -28,6 +28,7 @@ import { ReglasClasificacionService } from '../reglas-clasificacion/reglas-clasi
 import { LadoAsiento } from '../reglas-clasificacion/schemas/regla-clasificacion.schema';
 import { AiProviderResolverService } from '../configuracion/ai-provider-resolver.service';
 import { ProveedorIA } from '../common/enums/proveedor-ia.enum';
+import { conTimeout } from '../common/utils/con-timeout';
 import {
   MovimientoValidable,
   construirMovimientosConValidacion,
@@ -44,6 +45,17 @@ export interface ProcesarExtractoJobData {
   nombreArchivo: string;
   contenidoBase64: string;
 }
+
+/**
+ * Techo de tiempo para el pipeline completo (PDF + IA + validación de
+ * saldo), sea cual sea la causa de la demora (proveedor de IA que no
+ * responde, red colgada, lo que sea) — ver `conTimeout` y su uso en
+ * `ExtractosIaProcessor.process`. Deliberadamente más laxo que el timeout
+ * default de los SDKs de Anthropic/OpenAI (10 min) para que sea ESTE el que
+ * gane la carrera y deje un mensaje de error legible en vez de que el SDK
+ * tire su propio error crudo primero.
+ */
+const TIMEOUT_PROCESAMIENTO_MS = 8 * 60 * 1000;
 
 /**
  * Worker BullMQ que hace el trabajo pesado que antes vivía en
@@ -66,7 +78,28 @@ export interface ProcesarExtractoJobData {
  *
  * Al terminar (éxito, `requiere_revision` o error) notifica por WebSocket
  * vía `RealtimeGateway` a la room del estudio dueño del extracto, para que
- * el Frontend actualice la fila sin tener que pollear.
+ * el Frontend actualice la fila sin tener que pollear. Mientras el pipeline
+ * corre, además emite `extracto:progreso` (etapa + porcentaje aproximado) en
+ * cada punto intermedio — ver `notificarProgreso` — para que el Frontend
+ * muestre avance real en vez de un spinner ciego.
+ *
+ * GARANTÍA CONTRA QUEDAR "COLGADO": todo el pipeline (`ejecutarPipeline`)
+ * corre contra un timeout propio de `TIMEOUT_PROCESAMIENTO_MS` (ver
+ * `conTimeout`) — si nada respondió en ese lapso (típicamente el proveedor
+ * de IA), el job igual termina en ese momento con el extracto en `ERROR` en
+ * vez de seguir "procesando" para siempre. Esto cubre el caso de que la
+ * llamada externa nunca vuelva; NO cubre el caso de que el proceso de Node
+ * entero se caiga a mitad de un job (sobre todo en `QUEUE_MODE=inline`, sin
+ * persistencia de la cola) — para eso existe `ExtractosIaWatchdogService`
+ * (cron cada 5 min, `extractos-ia-watchdog.service.ts`), que fuerza a error
+ * cualquier extracto que siga en `PROCESANDO` mucho después de este timeout.
+ *
+ * Nota sobre la carrera contra el timeout: si `ejecutarPipeline` pierde la
+ * carrera, su promesa sigue corriendo "abandonada" en el event loop (Node no
+ * cancela un `await` en curso) — pero como `extracto.save()` y `notificar()`
+ * ya corrieron con el resultado del timeout, y nada vuelve a leer lo que esa
+ * promesa abandonada eventualmente resuelva, no hay riesgo de que un
+ * resultado tardío pise el `ERROR` ya persistido.
  *
  * PROVEEDOR DE IA: ya no se inyecta un único `AiExtractionPort` fijo por
  * variable de entorno (`AI_PROVIDER`) — se inyectan los tres adapters
@@ -127,91 +160,13 @@ export class ExtractosIaProcessor extends WorkerHost {
     let cuentasContables: CuentaContableDocument[] = [];
 
     try {
-      const { texto, tieneCapaDeTexto } = await this.pdfTextExtractor.extraer(contenidoBase64);
-
-      if (!tieneCapaDeTexto) {
-        extracto.estado = EstadoExtracto.ERROR;
-        extracto.mensajeError =
-          'PDF sin capa de texto, probablemente escaneado. No se envió a la IA.';
-        await extracto.save();
-        this.notificar(estudioId, extracto);
-        return;
-      }
-
-      const estudioObjectId = new Types.ObjectId(estudioId);
-      const { port: aiExtractionPort, credenciales } = await this.resolverAdapter(
-        estudioObjectId,
-        extracto.clienteId,
+      const resultadoPipeline = await conTimeout(
+        this.ejecutarPipeline(extracto, estudioId, nombreArchivo, contenidoBase64),
+        TIMEOUT_PROCESAMIENTO_MS,
+        `Se superó el tiempo máximo de procesamiento (${TIMEOUT_PROCESAMIENTO_MS / 60000} minutos) sin respuesta del proveedor de IA.`,
       );
-      cuentasContables = await this.obtenerCuentasContablesActivas(estudioObjectId);
-      const reglasExistentes = await this.obtenerReglasExistentes(
-        extracto.clienteId,
-        extracto.cuentaBancariaId,
-        estudioObjectId,
-        cuentasContables,
-      );
-
-      let resultado = await aiExtractionPort.extraerMovimientos(
-        {
-          nombreArchivo,
-          texto,
-          cuentasContablesDisponibles: cuentasContables.map((c) => ({
-            codigo: c.codigo,
-            nombre: c.nombre,
-            naturaleza: c.naturaleza,
-          })),
-          reglasExistentes,
-        },
-        credenciales,
-      );
-
-      if (!resultado.exitoso) {
-        extracto.estado = EstadoExtracto.ERROR;
-        extracto.mensajeError = resultado.mensaje ?? 'No se pudo procesar el extracto.';
-        await extracto.save();
-        this.notificar(estudioId, extracto);
-        return;
-      }
-
-      // Se captura del primer intento — el reintento (abajo) es solo para
-      // corregir filas con diferencia de saldo, no vuelve a pedir contexto
-      // de plan de cuentas/reglas ni a inferir reglas de nuevo.
-      reglasSugeridas = resultado.reglasSugeridas ?? [];
-
-      let movimientos = construirMovimientosConValidacion(
-        this.mapearExtraidos(filtrarFilasNoTransaccionales(resultado.movimientos)),
-        resultado.saldoInicialDeclarado,
-      );
-
-      // Reintento acotado (máx. 1): si hay diferencias de saldo, se le pide a
-      // la IA que revise solo las filas problemáticas antes de resignarse.
-      if (movimientos.some((m) => m.validacionSaldo === ValidacionSaldo.DIFERENCIA)) {
-        const reintento = await aiExtractionPort.extraerMovimientos(
-          {
-            nombreArchivo,
-            texto,
-            pistaRevision: describirDiferencias(movimientos),
-          },
-          credenciales,
-        );
-
-        if (reintento.exitoso) {
-          const movimientosReintento = construirMovimientosConValidacion(
-            this.mapearExtraidos(filtrarFilasNoTransaccionales(reintento.movimientos)),
-            reintento.saldoInicialDeclarado,
-          );
-          if (contarDiferencias(movimientosReintento) < contarDiferencias(movimientos)) {
-            movimientos = movimientosReintento;
-            resultado = reintento;
-          }
-        }
-      }
-
-      extracto.movimientos = movimientos;
-      extracto.saldoInicialDeclarado = resultado.saldoInicialDeclarado;
-      extracto.saldoFinalDeclarado = resultado.saldoFinalDeclarado;
-      extracto.estado = determinarEstadoFinal(movimientos, resultado.saldoFinalDeclarado);
-      extracto.mensajeError = undefined;
+      reglasSugeridas = resultadoPipeline.reglasSugeridas;
+      cuentasContables = resultadoPipeline.cuentasContables;
     } catch (error) {
       const mensaje =
         error instanceof Error ? error.message : 'Error desconocido al procesar el extracto';
@@ -223,6 +178,133 @@ export class ExtractosIaProcessor extends WorkerHost {
     await extracto.save();
     await this.crearReglasSugeridas(reglasSugeridas, cuentasContables, extracto, estudioId, userId);
     this.notificar(estudioId, extracto);
+  }
+
+  /**
+   * El trabajo pesado propiamente dicho, separado de `process` para poder
+   * correrlo contra `conTimeout` sin duplicar el guardado/notificación final
+   * en cada punto de salida — antes cada rama de error temprano (PDF sin
+   * texto, IA no exitosa) hacía su propio `save`+`notificar`+`return`; ahora
+   * todas las ramas solo dejan a `extracto` en el estado que corresponda y
+   * `process` se encarga una única vez de persistir y notificar.
+   */
+  private async ejecutarPipeline(
+    extracto: ExtractoBancarioDocument,
+    estudioId: string,
+    nombreArchivo: string,
+    contenidoBase64: string,
+  ): Promise<{
+    reglasSugeridas: ReglaClasificacionSugerida[];
+    cuentasContables: CuentaContableDocument[];
+  }> {
+    const extractoId = extracto._id.toString();
+
+    this.notificarProgreso(estudioId, extractoId, 'Leyendo el PDF', 10);
+    const { texto, tieneCapaDeTexto } = await this.pdfTextExtractor.extraer(contenidoBase64);
+
+    if (!tieneCapaDeTexto) {
+      extracto.estado = EstadoExtracto.ERROR;
+      extracto.mensajeError =
+        'PDF sin capa de texto, probablemente escaneado. No se envió a la IA.';
+      return { reglasSugeridas: [], cuentasContables: [] };
+    }
+
+    const estudioObjectId = new Types.ObjectId(estudioId);
+    const { port: aiExtractionPort, credenciales } = await this.resolverAdapter(
+      estudioObjectId,
+      extracto.clienteId,
+    );
+    const cuentasContables = await this.obtenerCuentasContablesActivas(estudioObjectId);
+    const reglasExistentes = await this.obtenerReglasExistentes(
+      extracto.clienteId,
+      extracto.cuentaBancariaId,
+      estudioObjectId,
+      cuentasContables,
+    );
+
+    this.notificarProgreso(
+      estudioId,
+      extractoId,
+      'Consultando la IA para transcribir los movimientos',
+      30,
+    );
+    let resultado = await aiExtractionPort.extraerMovimientos(
+      {
+        nombreArchivo,
+        texto,
+        cuentasContablesDisponibles: cuentasContables.map((c) => ({
+          codigo: c.codigo,
+          nombre: c.nombre,
+          naturaleza: c.naturaleza,
+        })),
+        reglasExistentes,
+      },
+      credenciales,
+    );
+
+    if (!resultado.exitoso) {
+      extracto.estado = EstadoExtracto.ERROR;
+      extracto.mensajeError = resultado.mensaje ?? 'No se pudo procesar el extracto.';
+      return { reglasSugeridas: [], cuentasContables };
+    }
+
+    // Se captura del primer intento — el reintento (abajo) es solo para
+    // corregir filas con diferencia de saldo, no vuelve a pedir contexto
+    // de plan de cuentas/reglas ni a inferir reglas de nuevo.
+    const reglasSugeridas = resultado.reglasSugeridas ?? [];
+
+    this.notificarProgreso(estudioId, extractoId, 'Validando saldos', 70);
+    let movimientos = construirMovimientosConValidacion(
+      this.mapearExtraidos(filtrarFilasNoTransaccionales(resultado.movimientos)),
+      resultado.saldoInicialDeclarado,
+    );
+
+    // Reintento acotado (máx. 1): si hay diferencias de saldo, se le pide a
+    // la IA que revise solo las filas problemáticas antes de resignarse.
+    if (movimientos.some((m) => m.validacionSaldo === ValidacionSaldo.DIFERENCIA)) {
+      this.notificarProgreso(estudioId, extractoId, 'Revisando diferencias de saldo con la IA', 85);
+      const reintento = await aiExtractionPort.extraerMovimientos(
+        {
+          nombreArchivo,
+          texto,
+          pistaRevision: describirDiferencias(movimientos),
+        },
+        credenciales,
+      );
+
+      if (reintento.exitoso) {
+        const movimientosReintento = construirMovimientosConValidacion(
+          this.mapearExtraidos(filtrarFilasNoTransaccionales(reintento.movimientos)),
+          reintento.saldoInicialDeclarado,
+        );
+        if (contarDiferencias(movimientosReintento) < contarDiferencias(movimientos)) {
+          movimientos = movimientosReintento;
+          resultado = reintento;
+        }
+      }
+    }
+
+    extracto.movimientos = movimientos;
+    extracto.saldoInicialDeclarado = resultado.saldoInicialDeclarado;
+    extracto.saldoFinalDeclarado = resultado.saldoFinalDeclarado;
+    extracto.estado = determinarEstadoFinal(movimientos, resultado.saldoFinalDeclarado);
+    extracto.mensajeError = undefined;
+
+    return { reglasSugeridas, cuentasContables };
+  }
+
+  /** Avance intermedio (no el resultado final, ver `notificar`) — `porcentaje` es aproximado, no viene de trabajo medible real. */
+  private notificarProgreso(
+    estudioId: string,
+    extractoId: string,
+    etapa: string,
+    porcentaje: number,
+  ): void {
+    this.realtimeGateway.emitToEstudio(estudioId, 'extracto:progreso', {
+      extractoId,
+      etapa,
+      porcentaje,
+    });
   }
 
   /** Plan de cuentas del estudio — compartido entre clientes (ver `CuentaContable`), ya no filtrado por `clienteId`. */

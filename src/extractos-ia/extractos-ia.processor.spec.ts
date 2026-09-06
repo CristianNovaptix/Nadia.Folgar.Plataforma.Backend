@@ -9,6 +9,7 @@ import { OpenAiExtractionAdapter } from './adapters/openai-extraction.adapter';
 import {
   EstadoExtracto,
   ExtractoBancario,
+  TipoMovimiento,
   ValidacionSaldo,
 } from './schemas/extracto-bancario.schema';
 import { PdfTextExtractorService } from './pdf-text-extractor.service';
@@ -221,6 +222,64 @@ describe('ExtractosIaProcessor', () => {
     expect(instance.mensajeError).toBe('timeout del proveedor de IA');
   });
 
+  it('nunca queda "colgado": si el proveedor de IA no responde nunca, el timeout propio del pipeline fuerza a error', async () => {
+    jest.useFakeTimers();
+    try {
+      const instance = buildExtractoInstance();
+      extractoModelMock.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) });
+      pdfTextExtractorMock.extraer.mockResolvedValue({ texto: 'texto', tieneCapaDeTexto: true });
+      // Simula un proveedor que nunca resuelve (red colgada, proxy que no corta la conexión, etc.)
+      fakePort.extraerMovimientos.mockReturnValue(new Promise<never>(() => {}));
+
+      const procesamiento = processor.process(buildJob());
+      await jest.advanceTimersByTimeAsync(8 * 60 * 1000);
+      await procesamiento;
+
+      expect(instance.estado).toBe(EstadoExtracto.ERROR);
+      expect(instance.mensajeError).toMatch(/tiempo máximo de procesamiento/i);
+      expect(instance.save).toHaveBeenCalledTimes(1);
+      expect(realtimeGatewayMock.emitToEstudio).toHaveBeenCalledWith(
+        estudioId,
+        'extracto:procesado',
+        {
+          extractoId,
+          estado: EstadoExtracto.ERROR,
+          nombreArchivo: 'extracto.pdf',
+        },
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('emite eventos de progreso intermedios ("extracto:progreso") además del resultado final', async () => {
+    const instance = buildExtractoInstance();
+    extractoModelMock.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) });
+    pdfTextExtractorMock.extraer.mockResolvedValue({ texto: 'texto', tieneCapaDeTexto: true });
+    fakePort.extraerMovimientos.mockResolvedValue({
+      exitoso: true,
+      movimientos: [],
+      reglasSugeridas: [],
+    });
+
+    await processor.process(buildJob());
+
+    const eventosProgreso = realtimeGatewayMock.emitToEstudio.mock.calls.filter(
+      ([, evento]) => evento === 'extracto:progreso',
+    );
+    const porcentajes = eventosProgreso.map(
+      ([, , payload]) => (payload as { porcentaje: number }).porcentaje,
+    );
+
+    expect(porcentajes).toEqual([10, 30, 70]);
+    eventosProgreso.forEach(([estudio, , payload]) => {
+      const progreso = payload as { extractoId: string; etapa: string };
+      expect(estudio).toBe(estudioId);
+      expect(progreso.extractoId).toBe(extractoId);
+      expect(typeof progreso.etapa).toBe('string');
+    });
+  });
+
   describe('validación de saldo — datos reales del extracto Santander de Interprints (julio 2024)', () => {
     it('marca "ok" cuando el saldo declarado por fila coincide con el calculado', async () => {
       const instance = buildExtractoInstance();
@@ -269,6 +328,68 @@ describe('ExtractosIaProcessor', () => {
         true,
       );
       expect(instance.estado).toBe(EstadoExtracto.PROCESADO);
+    });
+
+    it('corrige sola un "tipo" invertido (crédito leído como débito) cuando el saldo declarado de la fila lo prueba matemáticamente — bug real reportado por el usuario', async () => {
+      const instance = buildExtractoInstance();
+      extractoModelMock.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) });
+      pdfTextExtractorMock.extraer.mockResolvedValue({ texto: 'texto', tieneCapaDeTexto: true });
+      fakePort.extraerMovimientos.mockResolvedValue({
+        exitoso: true,
+        // Saldo ya en -34.720,01 antes de esta fila (mismo extracto real del reporte).
+        saldoInicialDeclarado: -34720.01,
+        saldoFinalDeclarado: -20127.21,
+        reglasSugeridas: [],
+        movimientos: [
+          {
+            fecha: '04/07/24',
+            concepto:
+              'Servicios de pago 30574816870 op9905299954 240702078americanexpress argentina 2',
+            monto: 14592.8,
+            // La IA lo transcribió como "debito" — el extracto real dice que es un crédito
+            // (el saldo declarado por el propio banco para esta fila, -20.127,21, solo cierra
+            // si el movimiento suma en vez de restar).
+            tipo: 'debito',
+            saldoDespues: -20127.21,
+          },
+        ],
+      });
+
+      await processor.process(buildJob());
+
+      expect(instance.movimientos[0].tipo).toBe(TipoMovimiento.CREDITO);
+      expect(instance.movimientos[0].saldoCalculado).toBe(-20127.21);
+      expect(instance.movimientos[0].validacionSaldo).toBe(ValidacionSaldo.OK);
+      expect(instance.estado).toBe(EstadoExtracto.PROCESADO);
+    });
+
+    it('NO corrige un "tipo" cuando la diferencia no coincide con el patrón de inversión (es un error de monto real, no de columna)', async () => {
+      const instance = buildExtractoInstance();
+      extractoModelMock.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) });
+      pdfTextExtractorMock.extraer.mockResolvedValue({ texto: 'texto', tieneCapaDeTexto: true });
+      fakePort.extraerMovimientos.mockResolvedValue({
+        exitoso: true,
+        saldoInicialDeclarado: 1000,
+        saldoFinalDeclarado: 1200,
+        reglasSugeridas: [],
+        movimientos: [
+          {
+            fecha: '01/01/26',
+            concepto: 'Transferencia',
+            monto: 100,
+            tipo: 'credito',
+            saldoDespues: 1200,
+          },
+        ],
+      });
+
+      await processor.process(buildJob());
+
+      // 100 (monto) tipo "credito" con saldo inicial 1000 da 1100, no 1200 — pero el 2x
+      // del monto (200) tampoco explica la diferencia real (100), así que no es una
+      // inversión de columna: se deja como diferencia real para revisión manual.
+      expect(instance.movimientos[0].tipo).toBe(TipoMovimiento.CREDITO);
+      expect(instance.movimientos[0].validacionSaldo).toBe(ValidacionSaldo.DIFERENCIA);
     });
 
     it('descarta la fila "Saldo Inicial" colada por la IA como movimiento en vez de duplicar el saldo calculado', async () => {

@@ -11,6 +11,7 @@ import {
 } from './extractos-ia.service';
 import { ExtractosIaController } from './extractos-ia.controller';
 import { ExtractosIaProcessor, ProcesarExtractoJobData } from './extractos-ia.processor';
+import { ExtractosIaWatchdogService } from './extractos-ia-watchdog.service';
 import { AiExtractionStubAdapter } from './adapters/ai-extraction-stub.adapter';
 import { AnthropicExtractionAdapter } from './adapters/anthropic-extraction.adapter';
 import { OpenAiExtractionAdapter } from './adapters/openai-extraction.adapter';
@@ -60,6 +61,12 @@ const inlineQueueLogger = new Logger('InlineExtractosQueue');
  * movimientos, le pasa el plan de cuentas del cliente y le pide que infiera
  * reglas de clasificación para patrones recurrentes (`reglasSugeridas`),
  * que quedan creadas y activas de inmediato con `procedencia: 'ia'`.
+ *
+ * `ExtractosIaWatchdogService` (cron cada 5 min) es la red de seguridad
+ * final contra extractos que quedan en `PROCESANDO` para siempre — cubre el
+ * caso de que el proceso de Node se caiga a mitad de un job (más probable en
+ * `QUEUE_MODE=inline`, sin persistencia de la cola) además del timeout
+ * propio que ya tiene `ExtractosIaProcessor` sobre el pipeline.
  */
 @Module({
   imports: [
@@ -75,6 +82,7 @@ const inlineQueueLogger = new Logger('InlineExtractosQueue');
   providers: [
     ExtractosIaService,
     ExtractosIaProcessor,
+    ExtractosIaWatchdogService,
     PdfTextExtractorService,
     ExtractoDeteccionService,
     AnthropicExtractionAdapter,

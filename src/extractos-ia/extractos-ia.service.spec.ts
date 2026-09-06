@@ -1,6 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Types } from 'mongoose';
 import { EXTRACTOS_PROCESSING_QUEUE, ExtractosIaService } from './extractos-ia.service';
 import {
@@ -124,6 +128,28 @@ describe('ExtractosIaService', () => {
       expect(result.estado).toBe(EstadoExtracto.PROCESANDO);
       expect(instance.save).not.toHaveBeenCalled();
     });
+
+    it('si la cola no responde a tiempo (ej. Redis caído/colgado), el extracto pasa a error y la request falla rápido en vez de quedar colgada', async () => {
+      jest.useFakeTimers();
+      try {
+        const nuevoId = new Types.ObjectId().toString();
+        const instance = buildExtractoInstance({ _id: nuevoId });
+        extractoModelMock.create.mockResolvedValue(instance);
+        // Simula una cola que nunca confirma el encolado (conexión "abierta" pero sin responder).
+        queueMock.add.mockReturnValue(new Promise<never>(() => {}));
+
+        const promesa = service.cargarExtracto(createDto, estudioId, userId);
+        const expectativa = expect(promesa).rejects.toThrow(ServiceUnavailableException);
+        await jest.advanceTimersByTimeAsync(8000);
+        await expectativa;
+
+        expect(instance.estado).toBe(EstadoExtracto.ERROR);
+        expect(instance.mensajeError).toMatch(/no respondió a tiempo/i);
+        expect(instance.save).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   it('findAll devuelve el listado paginado filtrado por estudio', async () => {
@@ -217,6 +243,45 @@ describe('ExtractosIaService', () => {
 
       expect(instance.estado).toBe(EstadoExtracto.PROCESADO);
       expect((result as any).movimientos[0].validacionSaldo).toBe(ValidacionSaldo.OK);
+    });
+
+    it('permite corregir manualmente un "tipo" (débito↔crédito) mal leído por la IA y recalcula el saldo — escape hatch pedido por el usuario para lo que el auto-fix no cubra', async () => {
+      const instance = buildExtractoInstance({
+        estado: EstadoExtracto.REQUIERE_REVISION,
+        saldoInicialDeclarado: 1000,
+        movimientos: [
+          {
+            fecha: '01/01/26',
+            concepto: 'Transferencia',
+            monto: 300,
+            tipo: 'debito',
+            saldoDeclarado: 1300,
+            validacionSaldo: ValidacionSaldo.DIFERENCIA,
+          },
+        ],
+      });
+      extractoModelMock.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) });
+
+      // El contador abre el pencil, cambia el "Tipo" de Débito a Crédito (el monto queda
+      // igual, siempre positivo — el signo lo pone "tipo") y guarda.
+      const result = await service.actualizarMovimientos(
+        '507f1f77bcf86cd799439011',
+        [
+          {
+            fecha: '01/01/26',
+            concepto: 'Transferencia',
+            monto: 300,
+            tipo: 'credito' as any,
+            saldoDeclarado: 1300,
+          },
+        ],
+        estudioId,
+      );
+
+      expect((result as any).movimientos[0].tipo).toBe('credito');
+      expect((result as any).movimientos[0].saldoCalculado).toBe(1300);
+      expect((result as any).movimientos[0].validacionSaldo).toBe(ValidacionSaldo.OK);
+      expect(instance.estado).toBe(EstadoExtracto.PROCESADO);
     });
   });
 

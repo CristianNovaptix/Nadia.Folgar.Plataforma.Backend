@@ -1,4 +1,11 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { PdfTextExtractorService } from './pdf-text-extractor.service';
@@ -13,6 +20,7 @@ import { QueryExtractoDto } from './dto/query-extracto.dto';
 import { AnalizarExtractoDto } from './dto/analizar-extracto.dto';
 import { UpdateExtractoDto } from './dto/update-extracto.dto';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
+import { conTimeout } from '../common/utils/con-timeout';
 import { CuentasBancariasService } from '../cuentas-bancarias/cuentas-bancarias.service';
 import { ExtractoDeteccionService } from './extracto-deteccion.service';
 import { ProcesarExtractoJobData } from './extractos-ia.processor';
@@ -23,6 +31,22 @@ export interface ExtractosProcessingQueue {
 }
 
 export const EXTRACTOS_PROCESSING_QUEUE = Symbol('EXTRACTOS_PROCESSING_QUEUE');
+
+/**
+ * Encolar un job es una operación liviana (un `LPUSH` a Redis, ni siquiera
+ * espera a que se procese) — si no se confirma en este lapso es porque la
+ * cola no está respondiendo (Redis caído/colgado), no porque haga falta más
+ * tiempo. Bug real reportado por el usuario: con `maxRetriesPerRequest: null`
+ * (`app.module.ts`, necesario para que el worker no falle comandos en un
+ * reconnect), si Redis deja de responder pero la conexión TCP sigue "abierta"
+ * (un container zombie, por ejemplo), `Queue.add()` reintenta para siempre en
+ * silencio en vez de fallar — sin este timeout, eso colgaba la request HTTP
+ * de `POST /extractos-ia` durante los 10 minutos completos del timeout propio
+ * del Frontend para esta llamada, con el extracto ya creado en Mongo pero sin
+ * que el contador se enterara de nada hasta que la request finalmente tirara
+ * error del lado del cliente.
+ */
+const TIMEOUT_ENCOLAR_MS = 8000;
 
 /**
  * Resultado del análisis previo a la carga (`POST /extractos-ia/analizar`):
@@ -48,9 +72,18 @@ export type SubtotalesPorConcepto = Record<string, number>;
  * método hacía todo eso de forma síncrona dentro de la misma request HTTP —
  * dejó de alcanzar en cuanto empezaron a llegar extractos reales que
  * superaban el timeout HTTP del Frontend.
+ *
+ * `cargarExtracto` encola contra un timeout propio (`TIMEOUT_ENCOLAR_MS`,
+ * 8s — ver el comentario ahí) para que un problema con Redis (caído, o
+ * "colgado" sin responder aunque la conexión TCP siga abierta) falle rápido
+ * y claro en vez de dejar la request HTTP esperando hasta que el Frontend se
+ * resigne por su propio timeout, con el extracto ya creado en Mongo pero sin
+ * que el contador se entere de nada mientras tanto.
  */
 @Injectable()
 export class ExtractosIaService {
+  private readonly logger = new Logger(ExtractosIaService.name);
+
   constructor(
     @InjectModel(ExtractoBancario.name)
     private readonly extractoModel: Model<ExtractoBancarioDocument>,
@@ -102,13 +135,27 @@ export class ExtractosIaService {
       estudioId,
     });
 
-    await this.extractosQueue.add('procesar', {
-      extractoId: extracto._id.toString(),
-      estudioId: estudioId.toString(),
-      userId: userId.toString(),
-      nombreArchivo: dto.nombreArchivo,
-      contenidoBase64: dto.contenidoBase64,
-    });
+    try {
+      await conTimeout(
+        this.extractosQueue.add('procesar', {
+          extractoId: extracto._id.toString(),
+          estudioId: estudioId.toString(),
+          userId: userId.toString(),
+          nombreArchivo: dto.nombreArchivo,
+          contenidoBase64: dto.contenidoBase64,
+        }),
+        TIMEOUT_ENCOLAR_MS,
+        'No se pudo encolar el procesamiento — la cola no respondió a tiempo. Probablemente Redis esté caído o no responda.',
+      );
+    } catch (error) {
+      const mensaje =
+        error instanceof Error ? error.message : 'No se pudo encolar el procesamiento.';
+      this.logger.error(`No se pudo encolar el extracto ${extracto._id.toString()}: ${mensaje}`);
+      extracto.estado = EstadoExtracto.ERROR;
+      extracto.mensajeError = mensaje;
+      await extracto.save();
+      throw new ServiceUnavailableException(mensaje);
+    }
 
     return extracto;
   }
