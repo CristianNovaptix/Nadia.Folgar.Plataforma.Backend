@@ -7,7 +7,7 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-backend-port.ps1 && npm run build && node dist/main.js",
+    "start": "npm run build && node dist/main.js",
     "start:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-backend-port.ps1 && npm run build && node dist/main.js",
     "start:debug": "nest start --debug --watch",
     "start:prod": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-backend-port.ps1 && node dist/main.js",
