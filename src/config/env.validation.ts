@@ -31,7 +31,7 @@ const envSchema = z.object({
   APPLE_OAUTH_CALLBACK_URL: z.string().url().optional(),
 
   THROTTLE_TTL: z.coerce.number().int().positive().default(60000),
-  THROTTLE_LIMIT: z.coerce.number().int().positive().default(20),
+  THROTTLE_LIMIT: z.coerce.number().int().positive().default(300),
 
   /**
    * Selección del adapter de IA para extractos-ia (`AiExtractionPort`).
