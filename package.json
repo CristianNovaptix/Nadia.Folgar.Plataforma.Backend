@@ -6,8 +6,9 @@
   "private": true,
   "scripts": {
     "build": "nest build",
+    "heroku-postbuild": "npm run build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "npm run build && node dist/main.js",
+    "start": "node dist/main.js",
     "start:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-backend-port.ps1 && npm run build && node dist/main.js",
     "start:debug": "nest start --debug --watch",
     "start:prod": "npm run build && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stop-backend-port.ps1 && node dist/main.js",
