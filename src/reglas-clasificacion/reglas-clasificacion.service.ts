@@ -174,7 +174,12 @@ export class ReglasClasificacionService {
     if (dto.clienteId) {
       await this.clientesService.findOne(dto.clienteId, estudioId);
     }
-    if (dto.cuentaContableId || dto.cuentaBancariaId || dto.clienteId || dto.cuentaContableSecundariaId) {
+    if (
+      dto.cuentaContableId ||
+      dto.cuentaBancariaId ||
+      dto.clienteId ||
+      dto.cuentaContableSecundariaId
+    ) {
       await this.assertReferenciasConsistentes(
         nextClienteId,
         dto.cuentaContableId ?? regla.cuentaContableId.toString(),

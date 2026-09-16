@@ -45,6 +45,20 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default('gpt-5.1'),
 
   /**
+   * SMTP real para el envío de mail transaccional (`MailService`) — hoy solo
+   * las "credenciales de acceso" que se generan al crear un integrante de
+   * "Personal" o el usuario de portal de un "Cliente". Sin estas 3 variables
+   * cargadas, `MailService` cae a modo "solo log" (ver su comentario) — no
+   * son requeridas para levantar el Backend.
+   */
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  /** Remitente que ve el destinatario — default: el mismo `SMTP_USER`. */
+  SMTP_FROM: z.string().optional(),
+
+  /**
    * Clave simétrica (32 bytes en base64) para `SecretCipherService` — cifra
    * las API keys de IA que el estudio conecta en Configuración →
    * Integraciones (`IntegracionIa.apiKeyCifrada`). Generar con

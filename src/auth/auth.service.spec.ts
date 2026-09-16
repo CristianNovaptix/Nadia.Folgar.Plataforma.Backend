@@ -48,7 +48,7 @@ describe('AuthService', () => {
     const passwordHash = await argon2.hash('correcta123');
     usersServiceMock.findByEmail.mockResolvedValue({ activo: true, passwordHash });
 
-    await expect(service.validateUser('a@b.com', 'incorrecta')).rejects.toThrow(
+    await expect(service.validateUser('contadora@folgar.com.ar', 'incorrecta')).rejects.toThrow(
       UnauthorizedException,
     );
   });
@@ -57,9 +57,44 @@ describe('AuthService', () => {
     const passwordHash = await argon2.hash('correcta123');
     usersServiceMock.findByEmail.mockResolvedValue({ activo: false, passwordHash });
 
-    await expect(service.validateUser('a@b.com', 'correcta123')).rejects.toThrow(
+    await expect(service.validateUser('contadora@folgar.com.ar', 'correcta123')).rejects.toThrow(
       UnauthorizedException,
     );
+  });
+
+  it('acepta usuarios viejos sin campo activo cuando la password es correcta', async () => {
+    const passwordHash = await argon2.hash('correcta123');
+    const user = { passwordHash };
+    usersServiceMock.findByEmail.mockResolvedValue(user);
+
+    await expect(service.validateUser('contadora@folgar.com.ar', 'correcta123')).resolves.toBe(
+      user,
+    );
+  });
+
+  it('acepta login por password con un email real, no institucional (portal de Cliente)', async () => {
+    // Pedido explícito del usuario: el portal de Cliente se loguea con el
+    // email real del cliente, no con uno `@folgar.com.ar` — el gate que
+    // antes rechazaba cualquier email no institucional se sacó, ver el
+    // comentario en `AuthService.validateUser`.
+    const passwordHash = await argon2.hash('correcta123');
+    const user = { activo: true, passwordHash };
+    usersServiceMock.findByEmail.mockResolvedValue(user);
+
+    await expect(service.validateUser('cliente@gmail.com', 'correcta123')).resolves.toBe(user);
+    expect(usersServiceMock.findByEmail).toHaveBeenCalledWith('cliente@gmail.com');
+  });
+
+  it('rechaza login social con un email que no sea institucional', async () => {
+    jest.spyOn(service as any, 'fetchSocialProfile').mockResolvedValue({
+      email: 'contadora@gmail.com',
+      emailVerified: true,
+    });
+
+    await expect(service.loginWithSocialCode('google', 'code')).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(usersServiceMock.findByEmail).not.toHaveBeenCalled();
   });
 
   it('buildUserContext calcula permisos como unión de los roles del usuario', () => {
@@ -80,6 +115,22 @@ describe('AuthService', () => {
     expect(context.permissions.sort()).toEqual(
       ['clientes.read', 'clientes.write', 'users.read'].sort(),
     );
+  });
+
+  it('buildUserContext propaga debeCambiarPassword (true cuando un admin reseteó la contraseña)', () => {
+    const baseUser = {
+      _id: new Types.ObjectId(),
+      email: 'a@b.com',
+      estudioId: new Types.ObjectId(),
+      clienteId: undefined,
+      roleIds: [{ nombre: 'contador', permisos: [] }],
+    };
+
+    expect(
+      service.buildUserContext({ ...baseUser, debeCambiarPassword: true } as any)
+        .debeCambiarPassword,
+    ).toBe(true);
+    expect(service.buildUserContext(baseUser as any).debeCambiarPassword).toBe(false);
   });
 
   it('arma la URL de inicio OAuth de Google con callback y returnTo', () => {

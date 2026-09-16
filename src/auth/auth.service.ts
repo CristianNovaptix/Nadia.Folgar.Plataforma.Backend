@@ -6,6 +6,7 @@ import { UsersService } from '../users/users.service';
 import { UserDocument } from '../users/schemas/user.schema';
 import { AuthenticatedUser, UserRole } from '../common/types/authenticated-user';
 import { Role } from '../roles/schemas/role.schema';
+import { esEmailInstitucional } from '../common/utils/email-institucional.util';
 
 export interface TokenPair {
   accessToken: string;
@@ -37,9 +38,20 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
+  /**
+   * Login por contraseña — históricamente exigía un email institucional
+   * (`@folgar.com.ar`) acá, porque tanto "Personal" (login institucional)
+   * como el portal de "Cliente" (login institucional armado desde el
+   * nombre) solo tenían contraseña bajo ese dominio. Pedido explícito del
+   * usuario: el portal de Cliente pasa a loguearse con el email REAL del
+   * cliente (`ClientesService.crearUsuarioPortal` ya no arma ningún
+   * `@folgar.com.ar`), así que ese gate quedaría bloqueando a cualquier
+   * cliente real — se saca. La seguridad real sigue siendo `findByEmail` +
+   * el hash de `argon2.verify` de abajo, no el dominio del email.
+   */
   async validateUser(email: string, password: string): Promise<UserDocument> {
     const user = await this.usersService.findByEmail(email);
-    if (!user || !user.activo) {
+    if (!user || !this.isActiveUser(user)) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
@@ -74,6 +86,7 @@ export class AuthService {
       permissions,
       estudioId: user.estudioId.toString(),
       clienteId: user.clienteId?.toString(),
+      debeCambiarPassword: user.debeCambiarPassword ?? false,
     };
   }
 
@@ -92,7 +105,7 @@ export class AuthService {
     }
 
     const user = await this.usersService.findOne(payload.sub);
-    if (!user.activo) {
+    if (!this.isActiveUser(user)) {
       throw new UnauthorizedException('Usuario inactivo');
     }
 
@@ -147,12 +160,20 @@ export class AuthService {
       throw new UnauthorizedException('El proveedor no confirmó el email de la cuenta');
     }
 
+    if (!esEmailInstitucional(profile.email)) {
+      throw new UnauthorizedException('No existe un usuario activo asociado a ese email');
+    }
+
     const user = await this.usersService.findByEmail(profile.email);
-    if (!user || !user.activo) {
+    if (!user || !this.isActiveUser(user)) {
       throw new UnauthorizedException('No existe un usuario activo asociado a ese email');
     }
 
     return this.login(user);
+  }
+
+  private isActiveUser(user: UserDocument): boolean {
+    return user.activo !== false;
   }
 
   resolveSocialReturnTo(state?: string): string {

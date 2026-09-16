@@ -5,7 +5,9 @@ import { PlanCuentasService } from './plan-cuentas.service';
 import { PlanCuentasController } from './plan-cuentas.controller';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: CuentaContable.name, schema: CuentaContableSchema }])],
+  imports: [
+    MongooseModule.forFeature([{ name: CuentaContable.name, schema: CuentaContableSchema }]),
+  ],
   controllers: [PlanCuentasController],
   providers: [PlanCuentasService],
   exports: [PlanCuentasService],

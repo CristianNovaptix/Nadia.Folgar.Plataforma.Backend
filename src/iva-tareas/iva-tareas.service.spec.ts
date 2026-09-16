@@ -501,21 +501,27 @@ describe('IvaTareasService', () => {
       activo: true,
       roleIds: [rolSinAcceso],
     };
+    // Caso real reportado: un integrante de Personal con `estudioId` distinto (dato viejo/migrado
+    // sin ese campo consistente) o dado de baja quedaba afuera de este picker aunque siguiera
+    // viéndose en "Personal" — ver el comentario en `findMiembrosDelTablero`.
+    const otroEstudioInactiva: FakeDoc = {
+      _id: new Types.ObjectId(),
+      nombre: 'Otro Estudio Inactiva',
+      estudioId: new Types.ObjectId(),
+      activo: false,
+      roleIds: [rolContador],
+    };
 
     const userModel = {
       find: jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([admin, contadora, sinAcceso]),
-        }),
+        exec: jest.fn().mockResolvedValue([admin, contadora, sinAcceso, otroEstudioInactiva]),
       }),
     };
 
     beforeEach(async () => {
       jest.clearAllMocks();
       userModel.find.mockReturnValue({
-        populate: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue([admin, contadora, sinAcceso]),
-        }),
+        exec: jest.fn().mockResolvedValue([admin, contadora, sinAcceso, otroEstudioInactiva]),
       });
 
       const moduleRef = await Test.createTestingModule({
@@ -533,14 +539,16 @@ describe('IvaTareasService', () => {
       service = moduleRef.get(IvaTareasService);
     });
 
-    it('incluye admin y contador (tienen iva-tareas.read) y excluye a quien no lo tiene', async () => {
-      const miembros = await service.findMiembrosDelTablero(estudioId);
+    it('incluye a todo integrante de Personal, sin filtrar por estudioId/activo/rol', async () => {
+      const miembros = await service.findMiembrosDelTablero();
       const nombres = miembros.map((m) => m.nombre).sort();
-      expect(nombres).toEqual(['Contadora Test', 'Nadia Admin'].sort());
+      expect(nombres).toEqual(
+        ['Contadora Test', 'Nadia Admin', 'Sin Acceso', 'Otro Estudio Inactiva'].sort(),
+      );
     });
 
     it('arma el avatarDataUrl cuando el usuario tiene foto cargada, y null si no', async () => {
-      const miembros = await service.findMiembrosDelTablero(estudioId);
+      const miembros = await service.findMiembrosDelTablero();
       expect(miembros.find((m) => m.nombre === 'Contadora Test')?.avatarDataUrl).toBe(
         'data:image/png;base64,abc123',
       );

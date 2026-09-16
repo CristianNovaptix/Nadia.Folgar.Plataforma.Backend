@@ -6,7 +6,10 @@ import {
   ReglaClasificacion,
   ReglaClasificacionDocument,
 } from '../reglas-clasificacion/schemas/regla-clasificacion.schema';
-import { CuentaContable, CuentaContableDocument } from '../plan-cuentas/schemas/cuenta-contable.schema';
+import {
+  CuentaContable,
+  CuentaContableDocument,
+} from '../plan-cuentas/schemas/cuenta-contable.schema';
 import { ExtractoBancarioDocument } from '../extractos-ia/schemas/extracto-bancario.schema';
 import { AsignacionManualDto } from './dto/asignacion-manual.dto';
 import {
@@ -134,7 +137,10 @@ export class AsientoContableService {
     }));
 
     const asignacionesMap = new Map<string, AsignacionManual>(
-      asignacionesManuales.map((a) => [a.movimientoId, { cuentaContableId: a.cuentaContableId, ladoAsiento: a.ladoAsiento }]),
+      asignacionesManuales.map((a) => [
+        a.movimientoId,
+        { cuentaContableId: a.cuentaContableId, ladoAsiento: a.ladoAsiento },
+      ]),
     );
 
     const asientosMensuales = construirAsientosMensuales(
@@ -170,9 +176,20 @@ export class AsientoContableService {
 
       const sinClasificar: MovimientoSinClasificar[] = mes.clasificados
         .filter((c) => c.cuentaContableId === null)
-        .map((c) => ({ movimientoId: c.movimiento._id, concepto: c.movimiento.concepto, monto: c.movimiento.monto }));
+        .map((c) => ({
+          movimientoId: c.movimiento._id,
+          concepto: c.movimiento.concepto,
+          monto: c.movimiento.monto,
+        }));
 
-      return { periodo: mes.periodo, lineas: lineasResueltas, totalDebe, totalHaber, cuadra, sinClasificar };
+      return {
+        periodo: mes.periodo,
+        lineas: lineasResueltas,
+        totalDebe,
+        totalHaber,
+        cuadra,
+        sinClasificar,
+      };
     });
 
     return { meses, banco: cuentaBancaria.banco };

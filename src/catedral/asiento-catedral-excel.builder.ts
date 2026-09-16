@@ -52,7 +52,9 @@ function fechaFinDePeriodo(periodo: string): string {
  * por Catedral (riesgo aceptado, ver plan) — queda deliberadamente aislado acá
  * para poder ajustar rápido columnas/formato el día que se consiga una.
  */
-export async function generarPlanillaAsientoCatedral(input: AsientoCatedralExcelInput): Promise<Buffer> {
+export async function generarPlanillaAsientoCatedral(
+  input: AsientoCatedralExcelInput,
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const hoja = workbook.addWorksheet('Asientos');
   hoja.addRow([...COLUMNAS]);

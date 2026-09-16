@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Cliente, ClienteSchema } from './schemas/cliente.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { Role, RoleSchema } from '../roles/schemas/role.schema';
 import { IntegracionIa, IntegracionIaSchema } from '../configuracion/schemas/integracion-ia.schema';
 import { ClientesService } from './clientes.service';
 import { ClientesController } from './clientes.controller';
@@ -14,6 +15,9 @@ import { ClientesController } from './clientes.controller';
  * mismo schema desde dos módulos con `MongooseModule.forFeature` es sano en
  * Mongoose (misma colección, sin acoplar los módulos entre sí); importar
  * `ConfiguracionModule` acá sí generaría una dependencia circular real.
+ * Mismo criterio para `Role`: `ClientesService.crearUsuarioPortal` necesita
+ * el rol de sistema "cliente" para dar de alta el usuario de portal, sin
+ * depender de `RolesModule`/`UsersModule` completos.
  */
 @Module({
   imports: [
@@ -21,8 +25,10 @@ import { ClientesController } from './clientes.controller';
       { name: Cliente.name, schema: ClienteSchema },
       // Para calcular `responsablesEfectivos` (asignación real + el/los
       // titular/es del estudio marcados con `User.esTitular`) en
-      // `ClientesService` — ver el comentario en `cliente.schema.ts`.
+      // `ClientesService` — ver el comentario en `cliente.schema.ts`. También
+      // usado por `crearUsuarioPortal` para dar de alta el usuario de portal.
       { name: User.name, schema: UserSchema },
+      { name: Role.name, schema: RoleSchema },
       { name: IntegracionIa.name, schema: IntegracionIaSchema },
     ]),
   ],

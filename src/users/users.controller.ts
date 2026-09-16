@@ -9,6 +9,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { RegenerarPasswordDto } from './dto/regenerar-password.dto';
 import { Types } from 'mongoose';
 
 @ApiTags('users')
@@ -48,5 +49,50 @@ export class UsersController {
   @Permissions(PERMISSIONS.USERS_WRITE)
   remove(@Param('id') id: string) {
     return this.usersService.deactivate(id);
+  }
+
+  /** "Crear usuario institucional" de la pantalla Personal — ver el comentario en `UsersService.generarCredencialesInstitucionales`. */
+  @Post(':id/credenciales-institucionales')
+  @Permissions(PERMISSIONS.USERS_WRITE)
+  async generarCredencialesInstitucionales(@Param('id') id: string) {
+    const { user, password } = await this.usersService.generarCredencialesInstitucionales(id);
+    return { usuario: this.usersService.toSummary(user), password };
+  }
+
+  /**
+   * "Crear usuario" del menú de Personal — ver `UsersService.generarCredencialesDeAcceso`.
+   * El `email` de esta respuesta es el institucional (login por contraseña),
+   * NUNCA el real del integrante (`User.email`, que sigue intacto) — es lo
+   * que hay que copiarle/pasarle para que entre por contraseña.
+   */
+  @Post(':id/credenciales-acceso')
+  @Permissions(PERMISSIONS.USERS_WRITE)
+  async generarCredencialesDeAcceso(@Param('id') id: string) {
+    const { user, emailInstitucional, password, emailEnviado } =
+      await this.usersService.generarCredencialesDeAcceso(id);
+    return {
+      usuario: { _id: user._id.toString(), nombre: user.nombre, email: emailInstitucional },
+      password,
+      emailEnviado,
+    };
+  }
+
+  /** "Cambiar contraseña" del menú de Personal — ver `UsersService.regenerarPassword`. */
+  @Post(':id/regenerar-password')
+  @Permissions(PERMISSIONS.USERS_WRITE)
+  async regenerarPassword(@Param('id') id: string, @Body() dto: RegenerarPasswordDto) {
+    const { user, password, emailEnviado } = await this.usersService.regenerarPassword(
+      id,
+      dto.password,
+    );
+    return {
+      usuario: {
+        _id: user._id.toString(),
+        nombre: user.nombre,
+        email: user.emailInstitucional ?? user.email ?? null,
+      },
+      password,
+      emailEnviado,
+    };
   }
 }

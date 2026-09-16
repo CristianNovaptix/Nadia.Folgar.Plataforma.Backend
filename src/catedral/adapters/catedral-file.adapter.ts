@@ -49,9 +49,14 @@ export class CatedralFileAdapter implements CatedralSyncPort {
     });
   }
 
-  async exportarAsientoContable(input: AsientoContableExportInput): Promise<AsientoContableExportResult> {
+  async exportarAsientoContable(
+    input: AsientoContableExportInput,
+  ): Promise<AsientoContableExportResult> {
     const estudioId = new Types.ObjectId(input.estudioId);
-    const extracto = await this.extractosIaService.obtenerDocumentoCompleto(input.extractoId, estudioId);
+    const extracto = await this.extractosIaService.obtenerDocumentoCompleto(
+      input.extractoId,
+      estudioId,
+    );
 
     const resultado = await this.asientoContableService.construirAsiento(
       extracto,
@@ -61,7 +66,9 @@ export class CatedralFileAdapter implements CatedralSyncPort {
 
     const algunMesInvalido = resultado.meses.some((m) => !m.cuadra || m.sinClasificar.length > 0);
     if (algunMesInvalido) {
-      const mesesConProblema = resultado.meses.filter((m) => !m.cuadra || m.sinClasificar.length > 0);
+      const mesesConProblema = resultado.meses.filter(
+        (m) => !m.cuadra || m.sinClasificar.length > 0,
+      );
       const detalle = mesesConProblema
         .map((m) =>
           !m.cuadra
@@ -73,7 +80,13 @@ export class CatedralFileAdapter implements CatedralSyncPort {
       return {
         exitoso: false,
         mensaje: `El asiento tiene meses sin validar — resolvé antes de exportar: ${detalle}`,
-        validacion: { meses: resultado.meses.map((m) => ({ periodo: m.periodo, cuadra: m.cuadra, sinClasificar: m.sinClasificar })) },
+        validacion: {
+          meses: resultado.meses.map((m) => ({
+            periodo: m.periodo,
+            cuadra: m.cuadra,
+            sinClasificar: m.sinClasificar,
+          })),
+        },
       };
     }
 

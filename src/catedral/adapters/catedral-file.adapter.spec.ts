@@ -27,7 +27,16 @@ describe('CatedralFileAdapter', () => {
       periodo: '2025-04',
     });
     (asientoContableServiceMock.construirAsiento as jest.Mock).mockResolvedValue({
-      meses: [{ periodo: '2025-04', lineas: [], totalDebe: 100, totalHaber: 50, cuadra: false, sinClasificar: [] }],
+      meses: [
+        {
+          periodo: '2025-04',
+          lineas: [],
+          totalDebe: 100,
+          totalHaber: 50,
+          cuadra: false,
+          sinClasificar: [],
+        },
+      ],
       banco: 'Credicoop',
     });
 
@@ -72,8 +81,22 @@ describe('CatedralFileAdapter', () => {
     (extractosIaServiceMock.obtenerDocumentoCompleto as jest.Mock).mockResolvedValue({});
     (asientoContableServiceMock.construirAsiento as jest.Mock).mockResolvedValue({
       meses: [
-        { periodo: '2025-03', lineas: [], totalDebe: 100, totalHaber: 100, cuadra: true, sinClasificar: [] },
-        { periodo: '2025-04', lineas: [], totalDebe: 100, totalHaber: 50, cuadra: false, sinClasificar: [] },
+        {
+          periodo: '2025-03',
+          lineas: [],
+          totalDebe: 100,
+          totalHaber: 100,
+          cuadra: true,
+          sinClasificar: [],
+        },
+        {
+          periodo: '2025-04',
+          lineas: [],
+          totalDebe: 100,
+          totalHaber: 50,
+          cuadra: false,
+          sinClasificar: [],
+        },
       ],
       banco: 'Galicia',
     });
@@ -96,8 +119,20 @@ describe('CatedralFileAdapter', () => {
         {
           periodo: '2025-04',
           lineas: [
-            { cuentaContableId: 'c1', codigo: '519', nombre: 'Gastos Bancarios', lado: 'debe', monto: 1200 },
-            { cuentaContableId: 'c2', codigo: '1119', nombre: 'Banco Credicoop', lado: 'haber', monto: 1200 },
+            {
+              cuentaContableId: 'c1',
+              codigo: '519',
+              nombre: 'Gastos Bancarios',
+              lado: 'debe',
+              monto: 1200,
+            },
+            {
+              cuentaContableId: 'c2',
+              codigo: '1119',
+              nombre: 'Banco Credicoop',
+              lado: 'haber',
+              monto: 1200,
+            },
           ],
           totalDebe: 1200,
           totalHaber: 1200,

@@ -8,6 +8,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv } from './config/env.validation';
 import { GlobalHttpExceptionFilter } from './common/filters/http-exception.filter';
+import { MailModule } from './common/mail/mail.module';
 import { TenancyModule } from './tenancy/tenancy.module';
 import { RolesModule } from './roles/roles.module';
 import { UsersModule } from './users/users.module';
@@ -87,6 +88,7 @@ const queueImports = useRedisQueues()
       ],
     }),
     ScheduleModule.forRoot(),
+    MailModule,
     TenancyModule,
     RolesModule,
     UsersModule,

@@ -8,5 +8,14 @@ export function parseCorsOrigins(raw: string, nodeEnv: string): string[] | boole
     return nodeEnv === 'development';
   }
 
-  return origins;
+  if (nodeEnv !== 'development') {
+    return origins;
+  }
+
+  const viteLocalOrigins = Array.from({ length: 7 }, (_, index) => 5173 + index).flatMap((port) => [
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+  ]);
+
+  return Array.from(new Set([...origins, ...viteLocalOrigins]));
 }

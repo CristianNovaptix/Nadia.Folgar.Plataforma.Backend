@@ -2,11 +2,14 @@ import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
+import * as argon2 from 'argon2';
 import { ClientesService } from './clientes.service';
 import { Cliente, RegimenFiscal } from './schemas/cliente.schema';
 import { User } from '../users/schemas/user.schema';
+import { Role } from '../roles/schemas/role.schema';
 import { IntegracionIa } from '../configuracion/schemas/integracion-ia.schema';
 import { ProveedorIA } from '../common/enums/proveedor-ia.enum';
+import { MailService } from '../common/mail/mail.service';
 
 describe('ClientesService', () => {
   let service: ClientesService;
@@ -24,8 +27,12 @@ describe('ClientesService', () => {
     find: jest.fn().mockReturnValue({
       select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
     }),
+    findOne: jest.fn(),
+    create: jest.fn(),
   };
+  const roleModelMock: any = { findOne: jest.fn() };
   const integracionIaModelMock: any = { exists: jest.fn() };
+  const mailServiceMock: any = { enviarCredenciales: jest.fn().mockResolvedValue(true) };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -33,12 +40,15 @@ describe('ClientesService', () => {
       select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
     });
     integracionIaModelMock.exists.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+    mailServiceMock.enviarCredenciales.mockResolvedValue(true);
     const moduleRef = await Test.createTestingModule({
       providers: [
         ClientesService,
         { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
         { provide: getModelToken(User.name), useValue: userModelMock },
+        { provide: getModelToken(Role.name), useValue: roleModelMock },
         { provide: getModelToken(IntegracionIa.name), useValue: integracionIaModelMock },
+        { provide: MailService, useValue: mailServiceMock },
       ],
     }).compile();
 
@@ -184,8 +194,10 @@ describe('ClientesService', () => {
         }),
       });
 
+      const clienteId = new Types.ObjectId();
       const cliente = {
-        toObject: () => ({ _id: new Types.ObjectId(), responsableIds: [] }),
+        _id: clienteId,
+        toObject: () => ({ _id: clienteId, responsableIds: [] }),
       };
       clienteModelMock.findOne.mockReturnValue({
         populate: jest.fn().mockReturnThis(),
@@ -217,9 +229,11 @@ describe('ClientesService', () => {
       // El cliente tiene a Daiana como "Personal a cargo" (responsableIds)
       // — pedido explícito del usuario: eso NO debe aparecer en
       // `responsablesEfectivos`, que es solo el/la titular.
+      const clienteId = new Types.ObjectId();
       const cliente = {
+        _id: clienteId,
         toObject: () => ({
-          _id: new Types.ObjectId(),
+          _id: clienteId,
           responsableIds: [{ _id: daianaId, nombre: 'Daiana Gencarelli' }],
         }),
       };
@@ -233,6 +247,50 @@ describe('ClientesService', () => {
       };
 
       expect(result.responsablesEfectivos).toEqual([{ _id: titularId, nombre: 'Nadia Folgar' }]);
+    });
+  });
+
+  describe('usuarioPortalEmail (login del usuario de portal, si ya lo tiene — el email real del cliente)', () => {
+    it('expone el email del usuario de portal ya creado', async () => {
+      const clienteId = new Types.ObjectId();
+      const cliente = {
+        _id: clienteId,
+        toObject: () => ({ _id: clienteId, email: 'contacto-real@ejemplo.com' }),
+      };
+      clienteModelMock.findOne.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(cliente),
+      });
+      userModelMock.find.mockImplementation((filter: { clienteId?: unknown }) => ({
+        select: jest.fn().mockReturnValue({
+          exec: jest
+            .fn()
+            .mockResolvedValue(
+              filter.clienteId ? [{ clienteId, email: 'contacto-real@ejemplo.com' }] : [],
+            ),
+        }),
+      }));
+
+      const result = (await service.findOne('507f1f77bcf86cd799439011', estudioId)) as {
+        usuarioPortalEmail: string | null;
+      };
+
+      expect(result.usuarioPortalEmail).toBe('contacto-real@ejemplo.com');
+    });
+
+    it('null cuando ese cliente todavía no tiene un usuario de portal creado', async () => {
+      const clienteId = new Types.ObjectId();
+      const cliente = { _id: clienteId, toObject: () => ({ _id: clienteId }) };
+      clienteModelMock.findOne.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(cliente),
+      });
+
+      const result = (await service.findOne('507f1f77bcf86cd799439011', estudioId)) as {
+        usuarioPortalEmail: string | null;
+      };
+
+      expect(result.usuarioPortalEmail).toBeNull();
     });
   });
 
@@ -277,6 +335,193 @@ describe('ClientesService', () => {
         proveedor: ProveedorIA.OPENAI,
       });
       expect(clienteModelMock.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('crearUsuarioPortal', () => {
+    function mockClienteConEmail(overrides: Partial<Record<string, unknown>> = {}) {
+      const cliente = {
+        _id: new Types.ObjectId(),
+        nombre: 'Cliente Test',
+        email: 'cliente@ejemplo.com',
+        ...overrides,
+      };
+      clienteModelMock.findOne.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(cliente),
+      });
+      return cliente;
+    }
+
+    it('crea el usuario de portal con el email REAL del cliente como login (no uno institucional) y le avisa ahí mismo', async () => {
+      const cliente = mockClienteConEmail();
+      const rolClienteId = new Types.ObjectId();
+      // 1ra llamada: ¿ya tiene un usuario de portal? (por clienteId). 2da:
+      // ¿ese email ya está tomado por otro usuario? — ninguna de las dos, sigue de largo.
+      userModelMock.findOne
+        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) })
+        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) });
+      roleModelMock.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ _id: rolClienteId, nombre: 'cliente' }),
+      });
+      userModelMock.create.mockResolvedValue({
+        _id: new Types.ObjectId(),
+        nombre: cliente.nombre,
+        email: 'cliente@ejemplo.com',
+      });
+
+      const { password, emailEnviado } = await service.crearUsuarioPortal(
+        cliente._id.toString(),
+        estudioId,
+      );
+
+      expect(userModelMock.findOne).toHaveBeenNthCalledWith(1, { clienteId: cliente._id });
+      expect(roleModelMock.findOne).toHaveBeenCalledWith({ nombre: 'cliente' });
+      const createArgs = userModelMock.create.mock.calls[0][0];
+      // El login ES el email real ya cargado — pedido explícito del usuario, revierte el criterio anterior.
+      expect(createArgs.email).toBe('cliente@ejemplo.com');
+      expect(createArgs.credencialesGeneradas).toBe(true);
+      expect(createArgs.roleIds).toEqual([rolClienteId]);
+      expect(createArgs.clienteId).toBe(cliente._id);
+      expect(typeof password).toBe('string');
+      expect(mailServiceMock.enviarCredenciales).toHaveBeenCalledWith({
+        to: 'cliente@ejemplo.com',
+        usuario: 'cliente@ejemplo.com',
+        nombre: cliente.nombre,
+        password,
+        esCliente: true,
+      });
+      expect(emailEnviado).toBe(true);
+    });
+
+    it('rechaza crearlo si el cliente no tiene un email cargado — sin eso no hay con qué loguearse', async () => {
+      const cliente = mockClienteConEmail({ email: undefined });
+
+      // Rechaza antes de llegar a consultar `userModel` — ni el chequeo de
+      // "ya tiene usuario de portal" ni el de "email ya tomado" se llegan a correr.
+      await expect(service.crearUsuarioPortal(cliente._id.toString(), estudioId)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(userModelMock.findOne).not.toHaveBeenCalled();
+      expect(userModelMock.create).not.toHaveBeenCalled();
+    });
+
+    it('rechaza crearlo si ese email ya lo usa otro usuario', async () => {
+      const cliente = mockClienteConEmail();
+      userModelMock.findOne
+        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) })
+        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue({ email: cliente.email }) });
+
+      await expect(service.crearUsuarioPortal(cliente._id.toString(), estudioId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(userModelMock.create).not.toHaveBeenCalled();
+    });
+
+    it('rechaza crearlo si el cliente ya tiene un usuario de portal creado', async () => {
+      const cliente = mockClienteConEmail();
+      userModelMock.findOne.mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ clienteId: cliente._id }),
+      });
+
+      await expect(service.crearUsuarioPortal(cliente._id.toString(), estudioId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(userModelMock.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('regenerarPasswordPortal ("Cambiar contraseña" — resetea, nunca recupera la original)', () => {
+    function mockCliente(overrides: Partial<Record<string, unknown>> = {}) {
+      const cliente = { _id: new Types.ObjectId(), nombre: 'Cliente Test', ...overrides };
+      clienteModelMock.findOne.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(cliente),
+      });
+      return cliente;
+    }
+
+    function mockUsuarioPortal(overrides: Partial<Record<string, unknown>> = {}) {
+      const usuarioPortal = {
+        _id: new Types.ObjectId(),
+        nombre: 'Cliente Test',
+        email: 'cliente.test@folgar.com.ar',
+        passwordHash: 'hash-viejo',
+        save: jest.fn().mockResolvedValue(undefined),
+        ...overrides,
+      };
+      userModelMock.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(usuarioPortal) });
+      return usuarioPortal;
+    }
+
+    it('rechaza si el cliente todavía no tiene un usuario de portal creado', async () => {
+      const cliente = mockCliente();
+      userModelMock.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+
+      await expect(
+        service.regenerarPasswordPortal(cliente._id.toString(), estudioId),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('genera una contraseña nueva sin tocar el email del usuario de portal, marca debeCambiarPassword', async () => {
+      const cliente = mockCliente();
+      const usuarioPortal = mockUsuarioPortal();
+
+      const { password } = await service.regenerarPasswordPortal(cliente._id.toString(), estudioId);
+
+      expect(usuarioPortal.email).toBe('cliente.test@folgar.com.ar');
+      expect(usuarioPortal.save).toHaveBeenCalled();
+      expect(usuarioPortal.passwordHash).not.toBe('hash-viejo');
+      expect((usuarioPortal as any).debeCambiarPassword).toBe(true);
+      expect(typeof password).toBe('string');
+    });
+
+    it('usa la contraseña manual en vez de generar una, si se la mandan', async () => {
+      const cliente = mockCliente();
+      const usuarioPortal = mockUsuarioPortal();
+
+      const { password } = await service.regenerarPasswordPortal(
+        cliente._id.toString(),
+        estudioId,
+        'unaClaveManual123',
+      );
+
+      expect(password).toBe('unaClaveManual123');
+      await expect(argon2.verify(usuarioPortal.passwordHash, 'unaClaveManual123')).resolves.toBe(
+        true,
+      );
+    });
+
+    it('avisa por mail al email real del cliente (nunca al login institucional)', async () => {
+      const cliente = mockCliente({ email: 'cliente@ejemplo.com' });
+      mockUsuarioPortal();
+
+      const { emailEnviado } = await service.regenerarPasswordPortal(
+        cliente._id.toString(),
+        estudioId,
+      );
+
+      expect(mailServiceMock.enviarCredenciales).toHaveBeenCalledWith({
+        to: 'cliente@ejemplo.com',
+        usuario: 'cliente.test@folgar.com.ar',
+        nombre: cliente.nombre,
+        password: expect.any(String),
+        esCliente: true,
+      });
+      expect(emailEnviado).toBe(true);
+    });
+
+    it('no manda mail si el cliente no tiene un email real cargado', async () => {
+      const cliente = mockCliente();
+      mockUsuarioPortal();
+
+      const { emailEnviado } = await service.regenerarPasswordPortal(
+        cliente._id.toString(),
+        estudioId,
+      );
+
+      expect(mailServiceMock.enviarCredenciales).not.toHaveBeenCalled();
+      expect(emailEnviado).toBe(false);
     });
   });
 });

@@ -68,7 +68,10 @@ function reglaAplica(
     return false;
   }
 
-  if (regla.patronTexto && !movimiento.concepto.toLowerCase().includes(regla.patronTexto.toLowerCase())) {
+  if (
+    regla.patronTexto &&
+    !movimiento.concepto.toLowerCase().includes(regla.patronTexto.toLowerCase())
+  ) {
     return false;
   }
 
@@ -136,7 +139,8 @@ export function clasificarMovimientos(
         ladoAsiento: reglaGanadora.ladoAsiento,
         reglaId: reglaGanadora._id,
         split:
-          reglaGanadora.cuentaContableSecundariaId && reglaGanadora.porcentajeSecundario !== undefined
+          reglaGanadora.cuentaContableSecundariaId &&
+          reglaGanadora.porcentajeSecundario !== undefined
             ? {
                 cuentaContableId: reglaGanadora.cuentaContableSecundariaId,
                 porcentaje: reglaGanadora.porcentajeSecundario,
@@ -288,7 +292,12 @@ export function construirAsientosMensuales(
       .find((m) => m.saldoCalculado !== undefined);
     const saldoFinal = ultimoConSaldo?.saldoCalculado;
 
-    const lineas = construirLineasAsiento(clasificados, cuentaContableBancariaId, saldoAnterior, saldoFinal);
+    const lineas = construirLineasAsiento(
+      clasificados,
+      cuentaContableBancariaId,
+      saldoAnterior,
+      saldoFinal,
+    );
 
     resultado.push({ periodo, saldoInicial: saldoAnterior, saldoFinal, lineas, clasificados });
     saldoAnterior = saldoFinal ?? saldoAnterior;

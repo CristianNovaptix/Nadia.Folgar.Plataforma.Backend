@@ -63,7 +63,8 @@ export class CatedralFileStubAdapter implements CatedralSyncPort {
 
     return Promise.resolve({
       exitoso: true,
-      mensaje: 'Simulado: exportación de asiento contable no implementada en este adapter (usar CatedralFileAdapter)',
+      mensaje:
+        'Simulado: exportación de asiento contable no implementada en este adapter (usar CatedralFileAdapter)',
     });
   }
 }

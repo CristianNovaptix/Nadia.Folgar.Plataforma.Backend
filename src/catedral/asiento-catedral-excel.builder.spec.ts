@@ -4,9 +4,21 @@ import { LineaAsientoResuelta } from '../asientos-contables/asiento-contable.ser
 
 describe('generarPlanillaAsientoCatedral', () => {
   const lineas: LineaAsientoResuelta[] = [
-    { cuentaContableId: 'c1', codigo: '519', nombre: 'Gastos Bancarios', lado: 'debe', monto: 1200 },
+    {
+      cuentaContableId: 'c1',
+      codigo: '519',
+      nombre: 'Gastos Bancarios',
+      lado: 'debe',
+      monto: 1200,
+    },
     { cuentaContableId: 'c2', codigo: '2111', nombre: 'Proveedores', lado: 'debe', monto: 5260000 },
-    { cuentaContableId: 'c3', codigo: '1119', nombre: 'Banco Credicoop', lado: 'haber', monto: 5261200 },
+    {
+      cuentaContableId: 'c3',
+      codigo: '1119',
+      nombre: 'Banco Credicoop',
+      lado: 'haber',
+      monto: 5261200,
+    },
   ];
 
   it('arma el layout de columnas del instructivo, con Detalle del pase vacío y descripción solo en la primera línea', async () => {
@@ -34,7 +46,15 @@ describe('generarPlanillaAsientoCatedral', () => {
     expect(hoja!.rowCount).toBe(1 + lineas.length);
 
     const fila1 = hoja!.getRow(2).values as unknown[];
-    expect(fila1.slice(1)).toEqual([1, '30/04/2025', '519', '', 1200, '', 'Movimientos bancarios Credicoop 2025-04']);
+    expect(fila1.slice(1)).toEqual([
+      1,
+      '30/04/2025',
+      '519',
+      '',
+      1200,
+      '',
+      'Movimientos bancarios Credicoop 2025-04',
+    ]);
 
     const fila2 = hoja!.getRow(3).values as unknown[];
     expect(fila2.slice(1)).toEqual([1, '30/04/2025', '2111', '', 5260000, '', '']);
@@ -71,11 +91,23 @@ describe('generarPlanillaAsientoCatedral', () => {
 
   it('un extracto de dos meses arma dos bloques apilados, con Número de asiento secuencial (1, 2)', async () => {
     const lineasMarzo: LineaAsientoResuelta[] = [
-      { cuentaContableId: 'c1', codigo: '519', nombre: 'Gastos Bancarios', lado: 'debe', monto: 300 },
+      {
+        cuentaContableId: 'c1',
+        codigo: '519',
+        nombre: 'Gastos Bancarios',
+        lado: 'debe',
+        monto: 300,
+      },
       { cuentaContableId: 'cb', codigo: '114', nombre: 'Banco Galicia', lado: 'haber', monto: 300 },
     ];
     const lineasAbril: LineaAsientoResuelta[] = [
-      { cuentaContableId: 'c1', codigo: '519', nombre: 'Gastos Bancarios', lado: 'debe', monto: 200 },
+      {
+        cuentaContableId: 'c1',
+        codigo: '519',
+        nombre: 'Gastos Bancarios',
+        lado: 'debe',
+        monto: 200,
+      },
       { cuentaContableId: 'cb', codigo: '114', nombre: 'Banco Galicia', lado: 'haber', monto: 200 },
     ];
 

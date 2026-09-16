@@ -21,6 +21,7 @@ import { ClientesService } from './clientes.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { QueryClienteDto } from './dto/query-cliente.dto';
+import { RegenerarPasswordDto } from '../users/dto/regenerar-password.dto';
 
 @ApiTags('clientes')
 @ApiBearerAuth()
@@ -61,5 +62,50 @@ export class ClientesController {
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.clientesService.deactivate(id, new Types.ObjectId(user.estudioId));
+  }
+
+  /** "Crear usuario y enviarle las credenciales por email" del alta de Cliente — ver `ClientesService.crearUsuarioPortal`. */
+  @Post(':id/usuario-portal')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  async crearUsuarioPortal(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const { usuario, password, emailEnviado } = await this.clientesService.crearUsuarioPortal(
+      id,
+      new Types.ObjectId(user.estudioId),
+    );
+    // Nunca se devuelve el documento de `User` crudo (traería `passwordHash`)
+    // — mismo criterio de saneo que `UsersService.toSummary`.
+    return {
+      usuario: {
+        _id: usuario._id.toString(),
+        nombre: usuario.nombre,
+        email: usuario.email ?? null,
+      },
+      password,
+      emailEnviado,
+    };
+  }
+
+  /** "Cambiar contraseña" del menú de acciones — ver `ClientesService.regenerarPasswordPortal`. */
+  @Post(':id/usuario-portal/regenerar-password')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  async regenerarPasswordPortal(
+    @Param('id') id: string,
+    @Body() dto: RegenerarPasswordDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const { usuario, password, emailEnviado } = await this.clientesService.regenerarPasswordPortal(
+      id,
+      new Types.ObjectId(user.estudioId),
+      dto.password,
+    );
+    return {
+      usuario: {
+        _id: usuario._id.toString(),
+        nombre: usuario.nombre,
+        email: usuario.email ?? null,
+      },
+      password,
+      emailEnviado,
+    };
   }
 }

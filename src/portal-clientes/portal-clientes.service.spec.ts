@@ -51,6 +51,7 @@ describe('PortalClientesService', () => {
     roles: ['admin'],
     permissions: [],
     estudioId: estudioId.toString(),
+    debeCambiarPassword: false,
   };
 
   function buildClienteUser(clienteId?: string): AuthenticatedUser {
@@ -60,6 +61,7 @@ describe('PortalClientesService', () => {
       roles: ['cliente'],
       permissions: ['portal.documentos.read'],
       estudioId: estudioId.toString(),
+      debeCambiarPassword: false,
       clienteId,
     };
   }

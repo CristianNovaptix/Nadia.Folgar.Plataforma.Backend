@@ -39,8 +39,18 @@ describe('clasificarMovimientos', () => {
   it('entre varias reglas que matchean, gana la de menor prioridad', () => {
     const movimientos = [movimiento({ concepto: 'Pago de servicios - Edenor' })];
     const reglas = [
-      regla({ _id: 'r-baja', patronTexto: 'servicios', prioridad: 200, cuentaContableId: 'cuenta-generica' }),
-      regla({ _id: 'r-alta', patronTexto: 'edenor', prioridad: 10, cuentaContableId: 'cuenta-edenor' }),
+      regla({
+        _id: 'r-baja',
+        patronTexto: 'servicios',
+        prioridad: 200,
+        cuentaContableId: 'cuenta-generica',
+      }),
+      regla({
+        _id: 'r-alta',
+        patronTexto: 'edenor',
+        prioridad: 10,
+        cuentaContableId: 'cuenta-edenor',
+      }),
     ];
 
     const [resultado] = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
@@ -59,7 +69,9 @@ describe('clasificarMovimientos', () => {
 
   it('cuando ninguna regla matchea, usa la asignación manual por movimientoId si existe', () => {
     const movimientos = [movimiento({ _id: 'mov-42', concepto: 'Pago AFIP autonomos' })];
-    const asignaciones = new Map([['mov-42', { cuentaContableId: 'cuenta-afip', ladoAsiento: 'debe' as const }]]);
+    const asignaciones = new Map([
+      ['mov-42', { cuentaContableId: 'cuenta-afip', ladoAsiento: 'debe' as const }],
+    ]);
 
     const [resultado] = clasificarMovimientos(movimientos, [], CUENTA_BANCARIA_ID, asignaciones);
 
@@ -70,9 +82,16 @@ describe('clasificarMovimientos', () => {
   it('una asignación manual le gana siempre a una regla que matchea para el mismo movimiento — es la vía para rectificar una fila mal clasificada', () => {
     const movimientos = [movimiento({ _id: 'mov-42', concepto: 'Pago AFIP autonomos' })];
     const reglas = [regla({ patronTexto: 'afip', cuentaContableId: 'cuenta-regla' })];
-    const asignaciones = new Map([['mov-42', { cuentaContableId: 'cuenta-manual', ladoAsiento: 'haber' as const }]]);
+    const asignaciones = new Map([
+      ['mov-42', { cuentaContableId: 'cuenta-manual', ladoAsiento: 'haber' as const }],
+    ]);
 
-    const [resultado] = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID, asignaciones);
+    const [resultado] = clasificarMovimientos(
+      movimientos,
+      reglas,
+      CUENTA_BANCARIA_ID,
+      asignaciones,
+    );
 
     expect(resultado.cuentaContableId).toBe('cuenta-manual');
     expect(resultado.ladoAsiento).toBe('haber');
@@ -82,24 +101,55 @@ describe('clasificarMovimientos', () => {
 
 describe('construirLineasAsiento', () => {
   it('sin saldos declarados, genera solo las líneas clasificadas, sin línea de banco', () => {
-    const movimientos = [movimiento({ concepto: 'Comisión mantenimiento', monto: -1200, tipo: 'debito' })];
-    const reglas = [regla({ patronTexto: 'mantenimiento', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' })];
+    const movimientos = [
+      movimiento({ concepto: 'Comisión mantenimiento', monto: -1200, tipo: 'debito' }),
+    ];
+    const reglas = [
+      regla({
+        patronTexto: 'mantenimiento',
+        cuentaContableId: 'cuenta-gastos',
+        ladoAsiento: 'debe',
+      }),
+    ];
 
     const clasificados = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
     const lineas = construirLineasAsiento(clasificados, CUENTA_BANCO);
 
     expect(lineas).toHaveLength(1);
-    expect(lineas[0]).toMatchObject({ cuentaContableId: 'cuenta-gastos', lado: 'debe', monto: 1200 });
+    expect(lineas[0]).toMatchObject({
+      cuentaContableId: 'cuenta-gastos',
+      lado: 'debe',
+      monto: 1200,
+    });
   });
 
   it('agrega una única línea "plug" en la cuenta bancaria = saldoFinal - saldoInicial', () => {
     const movimientos = [
-      movimiento({ _id: 'mov-1', concepto: 'Comisión mantenimiento', monto: -1200, tipo: 'debito' }),
-      movimiento({ _id: 'mov-2', concepto: 'Transferencia recibida', monto: 50000, tipo: 'credito' }),
+      movimiento({
+        _id: 'mov-1',
+        concepto: 'Comisión mantenimiento',
+        monto: -1200,
+        tipo: 'debito',
+      }),
+      movimiento({
+        _id: 'mov-2',
+        concepto: 'Transferencia recibida',
+        monto: 50000,
+        tipo: 'credito',
+      }),
     ];
     const reglas = [
-      regla({ patronTexto: 'mantenimiento', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' }),
-      regla({ _id: 'regla-2', patronTexto: 'transferencia', cuentaContableId: 'cuenta-clientes', ladoAsiento: 'haber' }),
+      regla({
+        patronTexto: 'mantenimiento',
+        cuentaContableId: 'cuenta-gastos',
+        ladoAsiento: 'debe',
+      }),
+      regla({
+        _id: 'regla-2',
+        patronTexto: 'transferencia',
+        cuentaContableId: 'cuenta-clientes',
+        ladoAsiento: 'haber',
+      }),
     ];
 
     const clasificados = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
@@ -112,35 +162,74 @@ describe('construirLineasAsiento', () => {
 
   it('Total Debe = Total Haber deja de ser una tautología: si falta clasificar un movimiento con efecto neto, no cuadra', () => {
     const movimientos = [
-      movimiento({ _id: 'mov-1', concepto: 'Comisión mantenimiento', monto: -1200, tipo: 'debito' }),
-      movimiento({ _id: 'mov-2', concepto: 'Transferencia recibida', monto: 50000, tipo: 'credito' }),
+      movimiento({
+        _id: 'mov-1',
+        concepto: 'Comisión mantenimiento',
+        monto: -1200,
+        tipo: 'debito',
+      }),
+      movimiento({
+        _id: 'mov-2',
+        concepto: 'Transferencia recibida',
+        monto: 50000,
+        tipo: 'credito',
+      }),
     ];
-    const reglas = [regla({ patronTexto: 'mantenimiento', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' })];
+    const reglas = [
+      regla({
+        patronTexto: 'mantenimiento',
+        cuentaContableId: 'cuenta-gastos',
+        ladoAsiento: 'debe',
+      }),
+    ];
 
     const clasificados = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
     const lineas = construirLineasAsiento(clasificados, CUENTA_BANCO, 100000, 148800);
 
     const totalDebe = lineas.filter((l) => l.lado === 'debe').reduce((acc, l) => acc + l.monto, 0);
-    const totalHaber = lineas.filter((l) => l.lado === 'haber').reduce((acc, l) => acc + l.monto, 0);
+    const totalHaber = lineas
+      .filter((l) => l.lado === 'haber')
+      .reduce((acc, l) => acc + l.monto, 0);
 
     expect(totalDebe).not.toBeCloseTo(totalHaber);
   });
 
   it('cuando todo está bien clasificado, el asiento cuadra exacto', () => {
     const movimientos = [
-      movimiento({ _id: 'mov-1', concepto: 'Comisión mantenimiento', monto: -1200, tipo: 'debito' }),
-      movimiento({ _id: 'mov-2', concepto: 'Transferencia recibida', monto: 50000, tipo: 'credito' }),
+      movimiento({
+        _id: 'mov-1',
+        concepto: 'Comisión mantenimiento',
+        monto: -1200,
+        tipo: 'debito',
+      }),
+      movimiento({
+        _id: 'mov-2',
+        concepto: 'Transferencia recibida',
+        monto: 50000,
+        tipo: 'credito',
+      }),
     ];
     const reglas = [
-      regla({ patronTexto: 'mantenimiento', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' }),
-      regla({ _id: 'regla-2', patronTexto: 'transferencia', cuentaContableId: 'cuenta-clientes', ladoAsiento: 'haber' }),
+      regla({
+        patronTexto: 'mantenimiento',
+        cuentaContableId: 'cuenta-gastos',
+        ladoAsiento: 'debe',
+      }),
+      regla({
+        _id: 'regla-2',
+        patronTexto: 'transferencia',
+        cuentaContableId: 'cuenta-clientes',
+        ladoAsiento: 'haber',
+      }),
     ];
 
     const clasificados = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
     const lineas = construirLineasAsiento(clasificados, CUENTA_BANCO, 100000, 148800);
 
     const totalDebe = lineas.filter((l) => l.lado === 'debe').reduce((acc, l) => acc + l.monto, 0);
-    const totalHaber = lineas.filter((l) => l.lado === 'haber').reduce((acc, l) => acc + l.monto, 0);
+    const totalHaber = lineas
+      .filter((l) => l.lado === 'haber')
+      .reduce((acc, l) => acc + l.monto, 0);
 
     expect(totalDebe).toBeCloseTo(totalHaber);
   });
@@ -151,18 +240,44 @@ describe('construirLineasAsiento', () => {
     // saldo: 27.568,30 -> 1.265.097,91 (delta +1.237.529,61) -> "1119 Banco Credicoop" Debe 1.237.529,61
     const movimientos = [
       movimiento({ _id: 'mov-sircreb', concepto: 'SIRCREB', monto: -46931.74, tipo: 'debito' }),
-      movimiento({ _id: 'mov-pago', concepto: 'PAGO PROVEEDOR SA', monto: -5260000, tipo: 'debito' }),
+      movimiento({
+        _id: 'mov-pago',
+        concepto: 'PAGO PROVEEDOR SA',
+        monto: -5260000,
+        tipo: 'debito',
+      }),
     ];
     const reglas = [
-      regla({ _id: 'r-sircreb', patronTexto: 'sircreb', cuentaContableId: 'cuenta-11217', ladoAsiento: 'debe' }),
-      regla({ _id: 'r-pago', patronTexto: 'proveedor', cuentaContableId: 'cuenta-2111', ladoAsiento: 'debe' }),
+      regla({
+        _id: 'r-sircreb',
+        patronTexto: 'sircreb',
+        cuentaContableId: 'cuenta-11217',
+        ladoAsiento: 'debe',
+      }),
+      regla({
+        _id: 'r-pago',
+        patronTexto: 'proveedor',
+        cuentaContableId: 'cuenta-2111',
+        ladoAsiento: 'debe',
+      }),
     ];
 
     const clasificados = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
-    const lineas = construirLineasAsiento(clasificados, 'cuenta-banco-credicoop', 27568.3, 1265097.91);
+    const lineas = construirLineasAsiento(
+      clasificados,
+      'cuenta-banco-credicoop',
+      27568.3,
+      1265097.91,
+    );
 
-    expect(lineas.find((l) => l.cuentaContableId === 'cuenta-11217')).toMatchObject({ lado: 'debe', monto: 46931.74 });
-    expect(lineas.find((l) => l.cuentaContableId === 'cuenta-2111')).toMatchObject({ lado: 'debe', monto: 5260000 });
+    expect(lineas.find((l) => l.cuentaContableId === 'cuenta-11217')).toMatchObject({
+      lado: 'debe',
+      monto: 46931.74,
+    });
+    expect(lineas.find((l) => l.cuentaContableId === 'cuenta-2111')).toMatchObject({
+      lado: 'debe',
+      monto: 5260000,
+    });
     const lineaBanco = lineas.find((l) => l.cuentaContableId === 'cuenta-banco-credicoop');
     expect(lineaBanco?.lado).toBe('debe');
     expect(lineaBanco?.monto).toBeCloseTo(1237529.61);
@@ -176,8 +291,18 @@ describe('construirLineasAsiento', () => {
     // más el 66% restante del crédito. No es un único % sobre el total combinado (esa fue la
     // aproximación incorrecta de la vuelta anterior) — son dos reglas distintas por patrón.
     const movimientos = [
-      movimiento({ _id: 'mov-deb', concepto: 'IMP. DEB. LEY 25413 GRAL.', monto: -191106.73, tipo: 'debito' }),
-      movimiento({ _id: 'mov-cre', concepto: 'IMP. CRE. LEY 25413', monto: -275197.614, tipo: 'debito' }),
+      movimiento({
+        _id: 'mov-deb',
+        concepto: 'IMP. DEB. LEY 25413 GRAL.',
+        monto: -191106.73,
+        tipo: 'debito',
+      }),
+      movimiento({
+        _id: 'mov-cre',
+        concepto: 'IMP. CRE. LEY 25413',
+        monto: -275197.614,
+        tipo: 'debito',
+      }),
     ];
     const reglaDebito = regla({
       _id: 'r-ley-debito',
@@ -194,7 +319,11 @@ describe('construirLineasAsiento', () => {
       porcentajeSecundario: 34,
     });
 
-    const clasificados = clasificarMovimientos(movimientos, [reglaDebito, reglaCredito], CUENTA_BANCARIA_ID);
+    const clasificados = clasificarMovimientos(
+      movimientos,
+      [reglaDebito, reglaCredito],
+      CUENTA_BANCARIA_ID,
+    );
     const lineas = construirLineasAsiento(clasificados, CUENTA_BANCO);
 
     const linea539 = lineas.find((l) => l.cuentaContableId === 'cuenta-539');
@@ -206,10 +335,22 @@ describe('construirLineasAsiento', () => {
 
   it('agrupa varios movimientos de la misma cuenta y lado en una sola línea, con trazabilidad', () => {
     const movimientos = [
-      movimiento({ _id: 'mov-1', concepto: 'Pago de servicios - Edenor', monto: -8500, tipo: 'debito' }),
-      movimiento({ _id: 'mov-2', concepto: 'Pago de servicios - Edenor', monto: -6200, tipo: 'debito' }),
+      movimiento({
+        _id: 'mov-1',
+        concepto: 'Pago de servicios - Edenor',
+        monto: -8500,
+        tipo: 'debito',
+      }),
+      movimiento({
+        _id: 'mov-2',
+        concepto: 'Pago de servicios - Edenor',
+        monto: -6200,
+        tipo: 'debito',
+      }),
     ];
-    const reglas = [regla({ patronTexto: 'edenor', cuentaContableId: 'cuenta-servicios', ladoAsiento: 'debe' })];
+    const reglas = [
+      regla({ patronTexto: 'edenor', cuentaContableId: 'cuenta-servicios', ladoAsiento: 'debe' }),
+    ];
 
     const clasificados = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
     const lineas = construirLineasAsiento(clasificados, CUENTA_BANCO);
@@ -270,9 +411,21 @@ describe('construirAsientosMensuales', () => {
         saldoCalculado: 98800,
       }),
     ];
-    const reglas = [regla({ patronTexto: 'mantenimiento', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' })];
+    const reglas = [
+      regla({
+        patronTexto: 'mantenimiento',
+        cuentaContableId: 'cuenta-gastos',
+        ladoAsiento: 'debe',
+      }),
+    ];
 
-    const asientos = construirAsientosMensuales(movimientos, reglas, CUENTA_BANCARIA_ID, CUENTA_BANCO, 100000);
+    const asientos = construirAsientosMensuales(
+      movimientos,
+      reglas,
+      CUENTA_BANCARIA_ID,
+      CUENTA_BANCO,
+      100000,
+    );
 
     expect(asientos).toHaveLength(1);
     expect(asientos[0].periodo).toBe('2025-04');
@@ -301,9 +454,17 @@ describe('construirAsientosMensuales', () => {
         saldoCalculado: 500,
       }),
     ];
-    const reglas = [regla({ patronTexto: 'gasto', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' })];
+    const reglas = [
+      regla({ patronTexto: 'gasto', cuentaContableId: 'cuenta-gastos', ladoAsiento: 'debe' }),
+    ];
 
-    const asientos = construirAsientosMensuales(movimientos, reglas, CUENTA_BANCARIA_ID, CUENTA_BANCO, 1000);
+    const asientos = construirAsientosMensuales(
+      movimientos,
+      reglas,
+      CUENTA_BANCARIA_ID,
+      CUENTA_BANCO,
+      1000,
+    );
 
     expect(asientos).toHaveLength(2);
 

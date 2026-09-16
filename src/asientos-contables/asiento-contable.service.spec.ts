@@ -41,7 +41,13 @@ describe('AsientoContableService', () => {
       periodo: '2025-04',
       saldoInicialDeclarado: 27568.3,
       movimientos: [
-        { _id: new Types.ObjectId(), concepto: 'SIRCREB', monto: -46931.74, tipo: 'debito', fecha: '10/04/25' },
+        {
+          _id: new Types.ObjectId(),
+          concepto: 'SIRCREB',
+          monto: -46931.74,
+          tipo: 'debito',
+          fecha: '10/04/25',
+        },
         {
           _id: new Types.ObjectId(),
           concepto: 'Transferencia recibida',
@@ -78,7 +84,12 @@ describe('AsientoContableService', () => {
     expect(mes.periodo).toBe('2025-04');
 
     const lineaGastos = mes.lineas.find((l) => l.cuentaContableId === cuentaGastos._id.toString());
-    expect(lineaGastos).toMatchObject({ codigo: '519', nombre: 'Gastos Bancarios', lado: 'debe', monto: 46931.74 });
+    expect(lineaGastos).toMatchObject({
+      codigo: '519',
+      nombre: 'Gastos Bancarios',
+      lado: 'debe',
+      monto: 46931.74,
+    });
 
     const lineaBanco = mes.lineas.find((l) => l.cuentaContableId === cuentaBanco._id.toString());
     expect(lineaBanco).toMatchObject({ codigo: '1119', lado: 'debe' });
@@ -102,7 +113,11 @@ describe('AsientoContableService', () => {
 
     await expect(
       service.construirAsiento(doc, estudioId, [
-        { movimientoId: doc.movimientos[0]._id!.toString(), cuentaContableId: cuentaAjena, ladoAsiento: 'debe' as any },
+        {
+          movimientoId: doc.movimientos[0]._id!.toString(),
+          cuentaContableId: cuentaAjena,
+          ladoAsiento: 'debe' as any,
+        },
       ]),
     ).rejects.toThrow('no pertenece al plan de cuentas del cliente');
   });
@@ -132,7 +147,13 @@ describe('AsientoContableService', () => {
     const doc = extracto({
       saldoInicialDeclarado: undefined,
       movimientos: [
-        { _id: new Types.ObjectId(), concepto: 'SIRCREB', monto: -46931.74, tipo: 'debito', fecha: '10/04/25' },
+        {
+          _id: new Types.ObjectId(),
+          concepto: 'SIRCREB',
+          monto: -46931.74,
+          tipo: 'debito',
+          fecha: '10/04/25',
+        },
         {
           _id: new Types.ObjectId(),
           concepto: 'Transferencia recibida',

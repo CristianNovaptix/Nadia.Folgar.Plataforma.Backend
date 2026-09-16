@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsEnum,
+  IsISO8601,
   IsMongoId,
   IsOptional,
   IsString,
@@ -22,13 +23,36 @@ export class CreateTareaPresentacionDto {
   @IsMongoId()
   clienteId: string;
 
+  /**
+   * Opcional: ya no es un campo que el usuario elige a mano — el Frontend lo
+   * deriva de si la tarjeta tiene aplicada una etiqueta ARCA/ARBA/AGIP (ver
+   * `jurisdiccionDeEtiquetas` del Frontend). Sigue existiendo como campo
+   * propio (no solo dentro de `etiquetas`) porque `findKanban`/el dashboard
+   * filtran y agrupan por acá.
+   */
+  @IsOptional()
   @IsEnum(Jurisdiccion)
-  jurisdiccion: Jurisdiccion;
+  jurisdiccion?: Jurisdiccion;
 
   /** Formato "YYYY-MM". */
   @IsString()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'periodo debe tener el formato YYYY-MM' })
   periodo: string;
+
+  /**
+   * Vencimiento de la tarjeta (rango opcional, equivalente a "Fechas" de
+   * Trello) — reemplaza al viejo selector de "Período" como único campo de
+   * fecha editable a mano. `periodo` (arriba) sigue siendo obligatorio como
+   * campo derivado interno: el Frontend lo calcula de `fechaHasta` (o
+   * `fechaDesde`) antes de mandar el alta.
+   */
+  @IsOptional()
+  @IsISO8601()
+  fechaDesde?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  fechaHasta?: string;
 
   @IsOptional()
   @IsEnum(EstadoTarea)

@@ -31,7 +31,11 @@ export interface SyncResult {
 export interface AsientoContableExportInput {
   extractoId: string;
   estudioId: string;
-  asignacionesManuales?: { movimientoId: string; cuentaContableId: string; ladoAsiento: LadoAsiento }[];
+  asignacionesManuales?: {
+    movimientoId: string;
+    cuentaContableId: string;
+    ladoAsiento: LadoAsiento;
+  }[];
 }
 
 export interface ArchivoGenerado {

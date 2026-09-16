@@ -4,8 +4,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { Cliente, ClienteDocument, RegimenFiscal } from '../clientes/schemas/cliente.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { RoleDocument } from '../roles/schemas/role.schema';
-import { PERMISSIONS } from '../common/constants/permissions';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
 import {
   ChecklistItem,
@@ -93,37 +91,38 @@ export class IvaTareasService {
   ) {}
 
   /**
-   * Usuarios internos del estudio (no de portal de clientes) que pueden ver
-   * este tablero — mismo criterio que agrupa permisos por rol que usa
-   * `AuthService.buildUserContext` para el JWT, pero acá evaluado para
-   * *otros* usuarios en vez del que hace la request. Alimenta el picker de
-   * "Asignar miembro/s" del Frontend: antes ese picker dependía de listar
-   * `/users` (permiso `users.read`, que el rol "contador" no tiene), así que
-   * quedaba degradado a "asignarme a mí". Este endpoint solo pide
-   * `iva-tareas.read`, que sí tiene cualquiera que use el tablero.
+   * Usuarios internos (no de portal de clientes) que pueden aparecer en
+   * "Asignar miembro/s"/"Asignado a" del Frontend — antes ese picker dependía
+   * de listar `/users` (permiso `users.read`, que el rol "contador" no
+   * tiene), así que quedaba degradado a "asignarme a mí". Este endpoint solo
+   * pide `iva-tareas.read`, que sí tiene cualquiera que use el tablero.
+   *
+   * Deliberadamente NO filtra además por `iva-tareas.read` en el ROL de cada
+   * usuario listado (a diferencia de una versión anterior de este método): todo
+   * integrante de Personal tiene que poder aparecer acá, tenga o no ese
+   * permiso puntual hoy — quién puede VER el tablero (para pedir este listado) es
+   * un gate aparte, en el controller.
+   *
+   * Tampoco filtra por `estudioId` ni por `activo` — pedido explícito: "todo el
+   * personal... deben verse siempre" en el filtro/asignación de tareas, mismo
+   * universo de usuarios que ya trae "Personal" del Frontend (`GET /users`, sin
+   * ninguno de esos dos filtros — ver `UsersService.findAll`). Con `estudioId` de
+   * por medio, un integrante real de Personal quedaba afuera de este picker en
+   * cuanto ese campo no coincidiera con el de quien lo estuviera pidiendo, aunque
+   * siguiera viéndose bien en "Personal" (que nunca filtró por acá) — caso real
+   * reportado, no hipotético.
    */
-  async findMiembrosDelTablero(estudioId: Types.ObjectId): Promise<MiembroTablero[]> {
-    const usuarios = await this.userModel
-      .find({ estudioId, activo: true, clienteId: { $exists: false } })
-      .populate('roleIds')
-      .exec();
+  async findMiembrosDelTablero(): Promise<MiembroTablero[]> {
+    const usuarios = await this.userModel.find({ clienteId: { $exists: false } }).exec();
 
-    return usuarios
-      .filter((usuario) => {
-        const roles = (usuario.roleIds as unknown as RoleDocument[]).filter(
-          (role): role is RoleDocument =>
-            typeof role === 'object' && role !== null && 'permisos' in role,
-        );
-        return roles.some((role) => role.permisos.includes(PERMISSIONS.IVA_TAREAS_READ));
-      })
-      .map((usuario) => ({
-        _id: usuario._id.toString(),
-        nombre: usuario.nombre,
-        avatarDataUrl:
-          usuario.avatarContentType && usuario.avatarBase64
-            ? `data:${usuario.avatarContentType};base64,${usuario.avatarBase64}`
-            : null,
-      }));
+    return usuarios.map((usuario) => ({
+      _id: usuario._id.toString(),
+      nombre: usuario.nombre,
+      avatarDataUrl:
+        usuario.avatarContentType && usuario.avatarBase64
+          ? `data:${usuario.avatarContentType};base64,${usuario.avatarBase64}`
+          : null,
+    }));
   }
 
   // ── Generación mensual automática ────────────────────────────────────
@@ -532,6 +531,8 @@ export class IvaTareasService {
       clienteId: new Types.ObjectId(dto.clienteId),
       jurisdiccion: dto.jurisdiccion,
       periodo: dto.periodo,
+      fechaDesde: dto.fechaDesde ? new Date(dto.fechaDesde) : undefined,
+      fechaHasta: dto.fechaHasta ? new Date(dto.fechaHasta) : undefined,
       estado,
       posicion,
       asignados: (dto.asignados ?? []).map((id) => new Types.ObjectId(id)),
@@ -564,11 +565,19 @@ export class IvaTareasService {
     if (dto.clienteId) {
       tarea.clienteId = new Types.ObjectId(dto.clienteId);
     }
-    if (dto.jurisdiccion) {
-      tarea.jurisdiccion = dto.jurisdiccion;
+    // Acepta `null` explícito para "quitar" (destildar la etiqueta ARCA/ARBA/AGIP sin elegir
+    // otra) — mismo criterio que `prioridad`/`portadaColor` más abajo.
+    if (dto.jurisdiccion !== undefined) {
+      tarea.jurisdiccion = dto.jurisdiccion ?? undefined;
     }
     if (dto.periodo) {
       tarea.periodo = dto.periodo;
+    }
+    if (dto.fechaDesde !== undefined) {
+      tarea.fechaDesde = dto.fechaDesde ? new Date(dto.fechaDesde) : undefined;
+    }
+    if (dto.fechaHasta !== undefined) {
+      tarea.fechaHasta = dto.fechaHasta ? new Date(dto.fechaHasta) : undefined;
     }
     if (dto.asignados) {
       tarea.asignados = dto.asignados.map((id) => new Types.ObjectId(id));

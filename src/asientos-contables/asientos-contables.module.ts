@@ -1,7 +1,13 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ReglaClasificacion, ReglaClasificacionSchema } from '../reglas-clasificacion/schemas/regla-clasificacion.schema';
-import { CuentaContable, CuentaContableSchema } from '../plan-cuentas/schemas/cuenta-contable.schema';
+import {
+  ReglaClasificacion,
+  ReglaClasificacionSchema,
+} from '../reglas-clasificacion/schemas/regla-clasificacion.schema';
+import {
+  CuentaContable,
+  CuentaContableSchema,
+} from '../plan-cuentas/schemas/cuenta-contable.schema';
 import { CuentasBancariasModule } from '../cuentas-bancarias/cuentas-bancarias.module';
 import { AsientoContableService } from './asiento-contable.service';
 

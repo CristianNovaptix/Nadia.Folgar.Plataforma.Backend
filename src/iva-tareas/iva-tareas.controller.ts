@@ -53,8 +53,8 @@ export class IvaTareasController {
    */
   @Get('miembros')
   @Permissions(PERMISSIONS.IVA_TAREAS_READ)
-  miembros(@CurrentUser() user: AuthenticatedUser) {
-    return this.ivaTareasService.findMiembrosDelTablero(new Types.ObjectId(user.estudioId));
+  miembros() {
+    return this.ivaTareasService.findMiembrosDelTablero();
   }
 
   @Get(':id')

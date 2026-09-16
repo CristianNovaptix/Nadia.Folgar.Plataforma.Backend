@@ -85,9 +85,30 @@ export class TareaPresentacion {
   @Prop({ type: String, enum: Jurisdiccion, required: false })
   jurisdiccion?: Jurisdiccion;
 
-  /** Período fiscal de la presentación, formato "YYYY-MM" (ej. "2026-07"). */
+  /**
+   * Período fiscal de la presentación, formato "YYYY-MM" (ej. "2026-07") —
+   * sigue siendo el campo que usan `findKanban`/`generarTareasDelMes`/el
+   * dashboard para agrupar por mes. Ya no lo elige el usuario a mano: el
+   * Frontend lo deriva de `fechaHasta` (o `fechaDesde` si no hay hasta) al
+   * guardar el vencimiento, o cae al mes en curso si la tarjeta no tiene
+   * ninguna de las dos fechas cargada.
+   */
   @Prop({ required: true, trim: true })
   periodo: string;
+
+  /**
+   * Vencimiento de la tarjeta (equivalente a "Fechas" de Trello): rango
+   * opcional `fechaDesde`/`fechaHasta` que reemplaza al viejo selector de
+   * "Período" como único campo de fecha editable a mano. Ambas son
+   * independientes de `periodo` (que sigue existiendo solo como campo
+   * derivado interno, ver arriba) — una tarjeta puede no tener ninguna de
+   * las dos cargada.
+   */
+  @Prop({ type: Date, required: false })
+  fechaDesde?: Date;
+
+  @Prop({ type: Date, required: false })
+  fechaHasta?: Date;
 
   @Prop({ type: String, enum: EstadoTarea, default: EstadoTarea.PENDIENTE })
   estado: EstadoTarea;

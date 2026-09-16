@@ -6,8 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
+import * as argon2 from 'argon2';
 import { Cliente, ClienteDocument } from './schemas/cliente.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { Role, RoleDocument } from '../roles/schemas/role.schema';
 import {
   IntegracionIa,
   IntegracionIaDocument,
@@ -16,6 +18,8 @@ import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { QueryClienteDto } from './dto/query-cliente.dto';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
+import { MailService } from '../common/mail/mail.service';
+import { generarPasswordSegura } from '../common/utils/password.util';
 
 function normalizeCuit(cuit: string): string {
   return cuit.replace(/-/g, '');
@@ -32,8 +36,10 @@ export class ClientesService {
   constructor(
     @InjectModel(Cliente.name) private readonly clienteModel: Model<ClienteDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Role.name) private readonly roleModel: Model<RoleDocument>,
     @InjectModel(IntegracionIa.name)
     private readonly integracionIaModel: Model<IntegracionIaDocument>,
+    private readonly mailService: MailService,
   ) {}
 
   /**
@@ -58,21 +64,50 @@ export class ClientesService {
   }
 
   /**
+   * Email de login del usuario de portal ya creado para cada cliente (ver
+   * `crearUsuarioPortal`) — es el mismo `Cliente.email` real (pedido
+   * explícito del usuario: el portal se loguea con el email real, no con
+   * uno institucional armado del nombre). `null`/ausente = todavía no
+   * tiene uno. Una sola query para todos los clientes de la página (`$in`),
+   * no una por fila.
+   */
+  private async findUsuariosPortal(clienteIds: Types.ObjectId[]): Promise<Map<string, string>> {
+    const usuarios = await this.userModel
+      .find({ clienteId: { $in: clienteIds } })
+      .select('clienteId email')
+      .exec();
+    const mapa = new Map<string, string>();
+    for (const usuario of usuarios) {
+      if (usuario.clienteId && usuario.email) {
+        mapa.set(usuario.clienteId.toString(), usuario.email);
+      }
+    }
+    return mapa;
+  }
+
+  /**
    * `responsablesEfectivos` = SOLO el/la titular (hoy Nadia Folgar) — a
    * propósito no se mezcla con `responsableIds` ("Personal a cargo", quien
    * de verdad trabaja ese cliente): son dos conceptos separados, pedido
    * explícito del usuario ("en responsable solo debe estar Nadia Folgar,
    * personal a cargo es otra cosa"). Antes esta función unía ambos arrays
-   * (con dedup) — se sacó esa unión, no solo el dedup.
+   * (con dedup) — se sacó esa unión, no solo el dedup. De paso agrega
+   * `usuarioPortalEmail` (ver `findUsuariosPortal`) — pedido explícito del
+   * usuario: si este cliente ya tiene un usuario de portal creado, eso debe
+   * quedar visible siempre, no solo una vez en el diálogo de credenciales.
    */
   private async attachResponsablesEfectivos(
     clientes: ClienteDocument[],
     estudioId: Types.ObjectId,
   ): Promise<Record<string, unknown>[]> {
-    const automaticos = await this.findResponsablesAutomaticos(estudioId);
+    const [automaticos, usuariosPortal] = await Promise.all([
+      this.findResponsablesAutomaticos(estudioId),
+      this.findUsuariosPortal(clientes.map((cliente) => cliente._id)),
+    ]);
     return clientes.map((cliente) => {
       const obj = cliente.toObject() as unknown as Record<string, unknown>;
       obj.responsablesEfectivos = automaticos;
+      obj.usuarioPortalEmail = usuariosPortal.get(cliente._id.toString()) ?? null;
       return obj;
     });
   }
@@ -197,5 +232,111 @@ export class ClientesService {
     const cliente = await this.findOneDocument(id, estudioId);
     cliente.activo = false;
     await cliente.save();
+  }
+
+  /**
+   * "Crear usuario y enviarle las credenciales por email" del alta/menú de
+   * Cliente del Frontend — pedido explícito del usuario, revierte una
+   * decisión anterior: el usuario de login del portal es el email REAL ya
+   * cargado en el cliente (`Cliente.email`), no uno institucional
+   * `@folgar.com.ar` armado a partir del nombre (eso queda exclusivo de
+   * "Personal" — ver `UsersService.generarCredencialesInstitucionales`/
+   * `generarCredencialesDeAcceso`). Por eso acá `Cliente.email` pasa a ser
+   * obligatorio para poder crear el usuario de portal: sin un email propio
+   * no hay con qué loguearse. El `User` de portal no existe todavía en este
+   * punto (a diferencia de Personal, donde ya existe) — se crea con el rol
+   * de sistema "cliente" (ve solo el portal, mismo gate de permisos que
+   * cualquier otro usuario con ese rol) y `clienteId` apuntando a este
+   * cliente.
+   */
+  async crearUsuarioPortal(
+    id: string,
+    estudioId: Types.ObjectId,
+  ): Promise<{ usuario: UserDocument; password: string; emailEnviado: boolean }> {
+    const cliente = await this.findOneDocument(id, estudioId);
+
+    if (!cliente.email) {
+      throw new BadRequestException(
+        'Este cliente necesita un email cargado para poder crear su usuario de portal',
+      );
+    }
+
+    const yaTieneUsuario = await this.userModel.findOne({ clienteId: cliente._id }).exec();
+    if (yaTieneUsuario) {
+      throw new ConflictException('Este cliente ya tiene un usuario de portal creado');
+    }
+
+    const emailLogin = cliente.email.toLowerCase().trim();
+    const yaExisteEseLogin = await this.userModel.findOne({ email: emailLogin }).exec();
+    if (yaExisteEseLogin) {
+      throw new ConflictException('Ya existe un usuario con ese email');
+    }
+
+    const rolCliente = await this.roleModel.findOne({ nombre: 'cliente' }).exec();
+    if (!rolCliente) {
+      throw new BadRequestException('No se encontró el rol de sistema "cliente"');
+    }
+
+    const password = generarPasswordSegura();
+    const usuario = await this.userModel.create({
+      email: emailLogin,
+      passwordHash: await argon2.hash(password),
+      credencialesGeneradas: true,
+      nombre: cliente.nombre,
+      roleIds: [rolCliente._id],
+      clienteId: cliente._id,
+      estudioId,
+    });
+
+    const emailEnviado = await this.mailService.enviarCredenciales({
+      to: emailLogin,
+      usuario: emailLogin,
+      nombre: cliente.nombre,
+      password,
+      esCliente: true,
+    });
+
+    return { usuario, password, emailEnviado };
+  }
+
+  /**
+   * "Cambiar contraseña" del menú de Clientes — pedido explícito del
+   * usuario, mismo criterio que `UsersService.regenerarPassword` de
+   * "Personal": para un cliente que YA tiene un usuario de portal creado,
+   * en vez de volver a ofrecer "Crear usuario". No guarda la contraseña
+   * original de ninguna forma recuperable — deja una nueva como vigente (la
+   * que mande el admin en `passwordManual`, o una generada si no mandó
+   * ninguna), sin tocar el email de login ya asignado (el real del
+   * cliente — ver `crearUsuarioPortal`). Marca `debeCambiarPassword` — es
+   * temporal, tiene que cambiarla en su próximo login. Le avisa por mail a
+   * `cliente.email`.
+   */
+  async regenerarPasswordPortal(
+    id: string,
+    estudioId: Types.ObjectId,
+    passwordManual?: string,
+  ): Promise<{ usuario: UserDocument; password: string; emailEnviado: boolean }> {
+    const cliente = await this.findOneDocument(id, estudioId);
+    const usuario = await this.userModel.findOne({ clienteId: cliente._id }).exec();
+    if (!usuario) {
+      throw new NotFoundException('Este cliente todavía no tiene un usuario de portal creado');
+    }
+
+    const password = passwordManual || generarPasswordSegura();
+    usuario.passwordHash = await argon2.hash(password);
+    usuario.debeCambiarPassword = true;
+    await usuario.save();
+
+    const emailEnviado = cliente.email
+      ? await this.mailService.enviarCredenciales({
+          to: cliente.email,
+          usuario: usuario.email ?? '',
+          nombre: cliente.nombre,
+          password,
+          esCliente: true,
+        })
+      : false;
+
+    return { usuario, password, emailEnviado };
   }
 }
