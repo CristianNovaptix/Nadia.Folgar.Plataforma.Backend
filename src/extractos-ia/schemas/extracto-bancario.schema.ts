@@ -109,6 +109,21 @@ export class ExtractoBancario {
   @Prop({ required: true, trim: true })
   nombreArchivo: string;
 
+  /**
+   * PDF original codificado en base64 — mismo criterio de alcance que
+   * `Documento` (portal-clientes) y `TareaAdjunto` (iva-tareas): todavía no
+   * hay una solución de storage de objetos confirmada, así que el contenido
+   * se guarda directo en Mongo. `select: false` para que no viaje en
+   * `GET /extractos-ia` (hasta 100 registros por página) ni en el detalle —
+   * solo se trae explícitamente en `obtenerArchivo`, pedido bajo demanda
+   * cuando el contador realmente hace clic en "Ver PDF". Extractos cargados
+   * antes de este campo quedan sin PDF para ver — limitación conocida, no
+   * hay migración retroactiva posible (el archivo original ya se había
+   * descartado tras procesarlo).
+   */
+  @Prop({ select: false })
+  archivoBase64?: string;
+
   @Prop({
     type: String,
     enum: EstadoExtracto,

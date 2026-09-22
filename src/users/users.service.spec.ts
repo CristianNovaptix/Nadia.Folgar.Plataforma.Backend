@@ -513,6 +513,27 @@ describe('UsersService', () => {
       expect(summary.tieneCredenciales).toBe(true);
     });
 
+    it('expone esTitular — usado por el Frontend para preseleccionar el default del selector de "Responsable"', () => {
+      const conTitular = service.toSummary({
+        _id: new Types.ObjectId(),
+        email: 'nadia@folgar.com.ar',
+        nombre: 'Nadia Folgar',
+        roleIds: [],
+        activo: true,
+        esTitular: true,
+      } as any);
+      const sinTitular = service.toSummary({
+        _id: new Types.ObjectId(),
+        email: 'daiana@folgar.com.ar',
+        nombre: 'Daiana',
+        roleIds: [],
+        activo: true,
+      } as any);
+
+      expect(conTitular.esTitular).toBe(true);
+      expect(sinTitular.esTitular).toBe(false);
+    });
+
     it('no revienta si roleIds no vino poblado (queda con nombre vacío)', () => {
       const roleId = new Types.ObjectId();
       const summary = service.toSummary({
@@ -553,6 +574,30 @@ describe('UsersService', () => {
       } as any);
 
       expect(summary.tieneCredenciales).toBe(true);
+    });
+
+    it('expone permisosExtra/permisosDenegados, vacíos si el usuario nunca tuvo ninguna excepción', () => {
+      const sinExcepciones = service.toSummary({
+        _id: new Types.ObjectId(),
+        email: 'sin-excepciones@folgar.com',
+        nombre: 'Sin Excepciones',
+        roleIds: [],
+        activo: true,
+      } as any);
+      expect(sinExcepciones.permisosExtra).toEqual([]);
+      expect(sinExcepciones.permisosDenegados).toEqual([]);
+
+      const conExcepciones = service.toSummary({
+        _id: new Types.ObjectId(),
+        email: 'con-excepciones@folgar.com',
+        nombre: 'Con Excepciones',
+        roleIds: [],
+        activo: true,
+        permisosExtra: ['users.read'],
+        permisosDenegados: ['clientes.write'],
+      } as any);
+      expect(conExcepciones.permisosExtra).toEqual(['users.read']);
+      expect(conExcepciones.permisosDenegados).toEqual(['clientes.write']);
     });
   });
 

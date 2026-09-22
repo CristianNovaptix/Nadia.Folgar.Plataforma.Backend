@@ -11,6 +11,28 @@ export enum RegimenFiscal {
   EXENTO = 'exento',
 }
 
+/**
+ * Credencial de acceso a un organismo fiscal (ARCA/ARBA/AGIP) para un
+ * cliente — pedido explícito del usuario, pantalla "Credenciales" de
+ * `ClienteFormDialog`. Mismo criterio de cifrado que `IntegracionIa.apiKeyCifrada`
+ * (Configuración → Integraciones): `passwordCifrada` nunca sale de
+ * `ClientesService` en claro, `passwordPreview` (ej. "····kuY0") es lo único
+ * que se manda al Frontend — ver `ClientesService.sanitizeCredenciales`.
+ */
+@Schema({ _id: false })
+export class CredencialOrganismo {
+  @Prop({ trim: true })
+  usuario?: string;
+
+  @Prop()
+  passwordCifrada?: string;
+
+  @Prop()
+  passwordPreview?: string;
+}
+
+export const CredencialOrganismoSchema = SchemaFactory.createForClass(CredencialOrganismo);
+
 @Schema(baseSchemaOptions)
 export class Cliente {
   @Prop({ required: true, trim: true })
@@ -58,6 +80,21 @@ export class Cliente {
   @Prop({ type: [Types.ObjectId], ref: 'User', default: [] })
   responsableIds: Types.ObjectId[];
 
+  /**
+   * "Responsable" real, elegible por cliente — pedido explícito del
+   * usuario: reemplaza el criterio anterior (`responsablesEfectivos`, SOLO
+   * calculado por `User.esTitular`, igual para todos los clientes, sin
+   * poder elegir otra persona). Ahora es un único miembro de "Personal"
+   * (distinto de `responsableIds`/"Personal a cargo", que admite varios) —
+   * `undefined` = todavía no se eligió a mano, y `ClientesService` lo
+   * completa con el/la titular del estudio como default al armar la
+   * respuesta (`responsableTitular`, ver `attachResponsablesEfectivos`),
+   * sin persistir nada hasta que se guarde explícitamente esa elección
+   * (aunque sea la default, sin tocar nada).
+   */
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  responsableTitularId?: Types.ObjectId;
+
   @Prop({ default: true })
   activo: boolean;
 
@@ -72,6 +109,16 @@ export class Cliente {
    */
   @Prop({ type: String, enum: ProveedorIA })
   motorIaPreferido?: ProveedorIA;
+
+  /** Credenciales de acceso a cada organismo fiscal — ver `CredencialOrganismo` arriba. */
+  @Prop({ type: CredencialOrganismoSchema })
+  credencialesArca?: CredencialOrganismo;
+
+  @Prop({ type: CredencialOrganismoSchema })
+  credencialesArba?: CredencialOrganismo;
+
+  @Prop({ type: CredencialOrganismoSchema })
+  credencialesAgip?: CredencialOrganismo;
 }
 
 export const ClienteSchema = SchemaFactory.createForClass(Cliente);

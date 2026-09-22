@@ -6,6 +6,7 @@ import { Role, RoleSchema } from '../roles/schemas/role.schema';
 import { IntegracionIa, IntegracionIaSchema } from '../configuracion/schemas/integracion-ia.schema';
 import { ClientesService } from './clientes.service';
 import { ClientesController } from './clientes.controller';
+import { SecretCipherService } from '../common/crypto/secret-cipher.service';
 
 /**
  * Registra también el schema de `IntegracionIa` (dueño real: `ConfiguracionModule`)
@@ -33,7 +34,12 @@ import { ClientesController } from './clientes.controller';
     ]),
   ],
   controllers: [ClientesController],
-  providers: [ClientesService],
+  // `SecretCipherService` también se registra acá (no solo en
+  // `ConfiguracionModule`), mismo criterio que los schemas de arriba: es sin
+  // estado (solo lee `SECRETS_ENCRYPTION_KEY` del entorno), así que
+  // `ClientesService` la usa directo para cifrar las credenciales de
+  // ARCA/ARBA/AGIP sin importar `ConfiguracionModule` completo.
+  providers: [ClientesService, SecretCipherService],
   exports: [ClientesService],
 })
 export class ClientesModule {}

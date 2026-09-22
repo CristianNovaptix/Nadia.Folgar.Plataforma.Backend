@@ -117,6 +117,22 @@ describe('AuthService', () => {
     );
   });
 
+  it('buildUserContext suma permisosExtra y resta permisosDenegados por sobre los del rol', () => {
+    const user = {
+      _id: new Types.ObjectId(),
+      email: 'a@b.com',
+      estudioId: new Types.ObjectId(),
+      clienteId: undefined,
+      roleIds: [{ nombre: 'contador', permisos: ['clientes.read', 'clientes.write'] }],
+      permisosExtra: ['users.read'],
+      permisosDenegados: ['clientes.write'],
+    } as any;
+
+    const context = service.buildUserContext(user);
+
+    expect(context.permissions.sort()).toEqual(['clientes.read', 'users.read'].sort());
+  });
+
   it('buildUserContext propaga debeCambiarPassword (true cuando un admin reseteó la contraseña)', () => {
     const baseUser = {
       _id: new Types.ObjectId(),

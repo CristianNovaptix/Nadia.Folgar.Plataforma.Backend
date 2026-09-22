@@ -77,7 +77,15 @@ export class AuthService {
     const roles = (user.roleIds as unknown as Role[]).filter(
       (role): role is Role => typeof role === 'object' && role !== null && 'nombre' in role,
     );
-    const permissions = Array.from(new Set(roles.flatMap((role) => role.permisos)));
+    // Permisos heredados de los roles, con las excepciones puntuales del
+    // usuario encima (`permisosExtra`) y descontando las suyas (`permisosDenegados`,
+    // que siempre gana por sobre lo que dé el rol) — ver el comentario en
+    // `user.schema.ts`.
+    const rolePermissions = roles.flatMap((role) => role.permisos);
+    const permisosDenegados = new Set(user.permisosDenegados ?? []);
+    const permissions = Array.from(
+      new Set([...rolePermissions, ...(user.permisosExtra ?? [])]),
+    ).filter((permission) => !permisosDenegados.has(permission));
 
     return {
       userId: user._id.toString(),

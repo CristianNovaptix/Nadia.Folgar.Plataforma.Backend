@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -107,5 +108,19 @@ export class ClientesController {
       password,
       emailEnviado,
     };
+  }
+
+  /** "Ver contraseña" de Credenciales (ARCA/ARBA/AGIP) — ver `ClientesService.revelarCredencial`. */
+  @Get(':id/credenciales/:organismo/revelar')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  revelarCredencial(
+    @Param('id') id: string,
+    @Param('organismo') organismo: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    if (organismo !== 'arca' && organismo !== 'arba' && organismo !== 'agip') {
+      throw new BadRequestException('Organismo inválido');
+    }
+    return this.clientesService.revelarCredencial(id, organismo, new Types.ObjectId(user.estudioId));
   }
 }

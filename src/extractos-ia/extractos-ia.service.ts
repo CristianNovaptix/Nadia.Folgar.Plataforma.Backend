@@ -130,6 +130,7 @@ export class ExtractosIaService {
       cuentaBancariaId: new Types.ObjectId(dto.cuentaBancariaId),
       periodo: dto.periodo,
       nombreArchivo: dto.nombreArchivo,
+      archivoBase64: dto.contenidoBase64,
       estado: EstadoExtracto.PROCESANDO,
       movimientos: [],
       estudioId,
@@ -212,6 +213,33 @@ export class ExtractosIaService {
     return {
       ...extracto.toObject(),
       subtotalesPorConcepto: this.calcularSubtotalesPorConcepto(extracto.movimientos),
+    };
+  }
+
+  /**
+   * PDF original del extracto, pedido bajo demanda (ver nota de alcance en
+   * `archivoBase64` del schema) — nunca viaja en `findOne`/`findAll`. Lanza
+   * NotFoundException si el extracto no existe en el estudio, o si es uno
+   * cargado antes de que este campo existiera (nunca se guardó el archivo).
+   */
+  async obtenerArchivo(
+    id: string,
+    estudioId: Types.ObjectId,
+  ): Promise<{ nombreArchivo: string; contentType: string; contenidoBase64: string }> {
+    const extracto = await this.extractoModel
+      .findOne({ _id: id, estudioId })
+      .select('+archivoBase64')
+      .exec();
+    if (!extracto) {
+      throw new NotFoundException('Extracto no encontrado');
+    }
+    if (!extracto.archivoBase64) {
+      throw new NotFoundException('Este extracto no tiene un PDF guardado para ver');
+    }
+    return {
+      nombreArchivo: extracto.nombreArchivo,
+      contentType: 'application/pdf',
+      contenidoBase64: extracto.archivoBase64,
     };
   }
 

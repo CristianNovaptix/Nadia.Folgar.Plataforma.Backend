@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 import { baseSchemaOptions } from '../../common/database/base-schema.options';
 import { RegimenFiscal } from '../../clientes/schemas/cliente.schema';
+import { PermissionCode } from '../../common/constants/permissions';
 
 export type UserDocument = HydratedDocument<User>;
 
@@ -82,6 +83,27 @@ export class User {
 
   @Prop({ type: [Types.ObjectId], ref: 'Role', default: [] })
   roleIds: Types.ObjectId[];
+
+  /**
+   * Excepciones de permisos por encima de lo que ya dan los roles de este
+   * usuario — pedido explícito del usuario ("hacer la excepción de quien
+   * quiera... y sus permisos"): a veces un integrante puntual necesita un
+   * permiso extra que su rol no le da, sin crear/tocar un rol nuevo para
+   * eso. `AuthService.buildUserContext` los suma a la unión de permisos de
+   * sus roles. Ver `permisosDenegados` para el caso inverso.
+   */
+  @Prop({ type: [String], default: [] })
+  permisosExtra: PermissionCode[];
+
+  /**
+   * Contracara de `permisosExtra`: permisos que este usuario NO debe tener
+   * aunque alguno de sus roles se lo dé (ej. un contador al que no se le
+   * quiere dejar eliminar clientes aunque el rol "contador" sí lo permita).
+   * Se resta de la unión de permisos de rol + `permisosExtra` — gana
+   * siempre la excepción puntual del usuario por sobre el rol.
+   */
+  @Prop({ type: [String], default: [] })
+  permisosDenegados: PermissionCode[];
 
   @Prop({ default: true })
   activo: boolean;

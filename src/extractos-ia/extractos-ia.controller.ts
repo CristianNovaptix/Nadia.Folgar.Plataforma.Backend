@@ -66,6 +66,13 @@ export class ExtractosIaController {
     return this.extractosIaService.findOne(id, new Types.ObjectId(user.estudioId));
   }
 
+  /** PDF original del extracto, pedido aparte (no viaja en `findOne`) — ver nota de alcance en el schema. */
+  @Get(':id/archivo')
+  @Permissions(PERMISSIONS.EXTRACTOS_READ)
+  obtenerArchivo(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.extractosIaService.obtenerArchivo(id, new Types.ObjectId(user.estudioId));
+  }
+
   /** Edición manual de los movimientos extraídos antes de confirmarlos (checklist FOLGAR-009). */
   @Patch(':id/movimientos')
   @Permissions(PERMISSIONS.EXTRACTOS_WRITE)

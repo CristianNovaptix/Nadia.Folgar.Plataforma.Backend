@@ -113,6 +113,7 @@ describe('ExtractosIaService', () => {
           clienteId: expect.any(Types.ObjectId),
           cuentaBancariaId: expect.any(Types.ObjectId),
           periodo: '2026-07',
+          archivoBase64: 'QQ==',
           estado: EstadoExtracto.PROCESANDO,
           estudioId,
         }),
@@ -174,6 +175,44 @@ describe('ExtractosIaService', () => {
     await expect(service.findOne('507f1f77bcf86cd799439011', estudioId)).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  describe('obtenerArchivo', () => {
+    it('devuelve el PDF guardado con el nombre original y contentType application/pdf', async () => {
+      const instance = buildExtractoInstance({ archivoBase64: 'QQ==' });
+      extractoModelMock.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) }),
+      });
+
+      const result = await service.obtenerArchivo('507f1f77bcf86cd799439011', estudioId);
+
+      expect(result).toEqual({
+        nombreArchivo: 'extracto.pdf',
+        contentType: 'application/pdf',
+        contenidoBase64: 'QQ==',
+      });
+    });
+
+    it('lanza NotFoundException si el extracto no existe en el estudio', async () => {
+      extractoModelMock.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+      });
+
+      await expect(service.obtenerArchivo('507f1f77bcf86cd799439011', estudioId)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lanza NotFoundException si es un extracto cargado antes de guardar el PDF (sin archivoBase64)', async () => {
+      const instance = buildExtractoInstance({ archivoBase64: undefined });
+      extractoModelMock.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) }),
+      });
+
+      await expect(service.obtenerArchivo('507f1f77bcf86cd799439011', estudioId)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
   });
 
   describe('actualizarMovimientos', () => {

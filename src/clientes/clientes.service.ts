@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import * as argon2 from 'argon2';
-import { Cliente, ClienteDocument } from './schemas/cliente.schema';
+import { Cliente, ClienteDocument, CredencialOrganismo } from './schemas/cliente.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Role, RoleDocument } from '../roles/schemas/role.schema';
 import {
@@ -17,9 +17,14 @@ import {
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { QueryClienteDto } from './dto/query-cliente.dto';
+import { CredencialOrganismoDto } from './dto/credencial-organismo.dto';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
 import { MailService } from '../common/mail/mail.service';
 import { generarPasswordSegura } from '../common/utils/password.util';
+import { SecretCipherService } from '../common/crypto/secret-cipher.service';
+
+/** Nombres de los tres `Prop` de `Cliente` que guardan una `CredencialOrganismo` — ver el schema. */
+const ORGANISMOS = ['credencialesArca', 'credencialesArba', 'credencialesAgip'] as const;
 
 function normalizeCuit(cuit: string): string {
   return cuit.replace(/-/g, '');
@@ -40,6 +45,7 @@ export class ClientesService {
     @InjectModel(IntegracionIa.name)
     private readonly integracionIaModel: Model<IntegracionIaDocument>,
     private readonly mailService: MailService,
+    private readonly secretCipher: SecretCipherService,
   ) {}
 
   /**
@@ -72,8 +78,13 @@ export class ClientesService {
    * no una por fila.
    */
   private async findUsuariosPortal(clienteIds: Types.ObjectId[]): Promise<Map<string, string>> {
+    // `activo: true` es a propósito — un cliente con un usuario de portal viejo y
+    // desactivado (ej. login institucional armado antes del cambio a email real, ver
+    // el CLAUDE.md del Frontend) hoy NO puede loguearse, así que no debe contar como
+    // "ya tiene acceso al portal": bug real, el filtro viejo mostraba "Con acceso al
+    // portal" para 3 clientes que en los hechos no podían entrar.
     const usuarios = await this.userModel
-      .find({ clienteId: { $in: clienteIds } })
+      .find({ clienteId: { $in: clienteIds }, activo: true })
       .select('clienteId email')
       .exec();
     const mapa = new Map<string, string>();
@@ -95,6 +106,16 @@ export class ClientesService {
    * `usuarioPortalEmail` (ver `findUsuariosPortal`) — pedido explícito del
    * usuario: si este cliente ya tiene un usuario de portal creado, eso debe
    * quedar visible siempre, no solo una vez en el diálogo de credenciales.
+   *
+   * También agrega `responsableTitular` (un único objeto, no un array) —
+   * pedido explícito del usuario, superador de `responsablesEfectivos`: el
+   * admin tiene que poder elegir a otra persona de "Personal" como
+   * "Responsable" de un cliente puntual, no que sea siempre y forzosamente
+   * el/la titular. Es `responsableTitularId` (ver `cliente.schema.ts`) ya
+   * poblado si se eligió a mano; si todavía no se eligió nada, cae al
+   * mismo default de siempre (el/la titular, `automaticos[0]`) — así el
+   * Frontend siempre tiene algo para preseleccionar sin tener que calcular
+   * el default por su cuenta.
    */
   private async attachResponsablesEfectivos(
     clientes: ClienteDocument[],
@@ -108,8 +129,56 @@ export class ClientesService {
       const obj = cliente.toObject() as unknown as Record<string, unknown>;
       obj.responsablesEfectivos = automaticos;
       obj.usuarioPortalEmail = usuariosPortal.get(cliente._id.toString()) ?? null;
-      return obj;
+      const elegido = obj.responsableTitularId as PersonalRef | null | undefined;
+      obj.responsableTitular = elegido && 'nombre' in elegido ? elegido : (automaticos[0] ?? null);
+      delete obj.responsableTitularId;
+      return this.sanitizeCredenciales(obj);
     });
+  }
+
+  /**
+   * Arma la `CredencialOrganismo` a persistir para un organismo (ARCA/ARBA/AGIP)
+   * dado lo que llegó en el DTO y lo que ya había guardado. `dto === undefined`
+   * (campo ausente del body) = no tocar nada, mismo criterio que
+   * `responsableIds`. `dto.password` vacío/ausente = no reemplazar la
+   * contraseña ya cifrada (solo actualiza `usuario`, si vino) — así "editar
+   * el usuario de ARCA" no obliga a retipear la contraseña cada vez.
+   */
+  private aplicarCredencial(
+    actual: CredencialOrganismo | undefined,
+    dto: CredencialOrganismoDto | undefined,
+  ): CredencialOrganismo | undefined {
+    if (dto === undefined) return actual;
+    const usuario = dto.usuario?.trim() || undefined;
+    if (!dto.password) {
+      if (!usuario && !actual?.passwordCifrada) return undefined;
+      return {
+        usuario,
+        passwordCifrada: actual?.passwordCifrada,
+        passwordPreview: actual?.passwordPreview,
+      };
+    }
+    return {
+      usuario,
+      passwordCifrada: this.secretCipher.encrypt(dto.password),
+      passwordPreview: `····${dto.password.slice(-4)}`,
+    };
+  }
+
+  /**
+   * Saca `passwordCifrada` de la respuesta antes de mandarla al Frontend —
+   * solo `usuario`/`passwordPreview` salen de este service, mismo criterio
+   * que `IntegracionesService.toMasked`. Acepta el objeto plano ya armado
+   * por `attachResponsablesEfectivos` o `cliente.toObject()`.
+   */
+  private sanitizeCredenciales(obj: Record<string, unknown>): Record<string, unknown> {
+    for (const organismo of ORGANISMOS) {
+      const cred = obj[organismo] as CredencialOrganismo | undefined;
+      if (cred) {
+        obj[organismo] = { usuario: cred.usuario, passwordPreview: cred.passwordPreview };
+      }
+    }
+    return obj;
   }
 
   /** `motorIaPreferido` solo puede setearse a un proveedor que el estudio ya conectó en Configuración → Integraciones. */
@@ -163,6 +232,7 @@ export class ClientesService {
         // "Personal" (Frontend) muestra los responsables con nombre/email
         // reales, no solo el ID — ver `responsableIds` en `cliente.schema.ts`.
         .populate('responsableIds', 'nombre email')
+        .populate('responsableTitularId', 'nombre email')
         .exec(),
       this.clienteModel.countDocuments(filter).exec(),
     ]);
@@ -180,6 +250,7 @@ export class ClientesService {
     const cliente = await this.clienteModel
       .findOne({ _id: id, estudioId })
       .populate('responsableIds', 'nombre email')
+      .populate('responsableTitularId', 'nombre email')
       .exec();
     if (!cliente) {
       throw new NotFoundException('Cliente no encontrado');
@@ -187,15 +258,50 @@ export class ClientesService {
     return cliente;
   }
 
-  async create(dto: CreateClienteDto, estudioId: Types.ObjectId): Promise<ClienteDocument> {
+  /**
+   * Un mismo email no puede repetirse entre dos Clientes distintos (pedido
+   * explícito del usuario: "es un único mismo mail por cliente"). A
+   * propósito NO se compara contra `User.email` de Personal: la misma
+   * persona puede ser Personal y Cliente a la vez con el mismo email (dos
+   * roles, ver `esTitular`/"Personal a cargo"), eso no es un duplicado.
+   */
+  private async validarEmailUnico(email: string, excluirClienteId?: Types.ObjectId): Promise<void> {
+    const emailNormalizado = email.toLowerCase().trim();
+    const filter: FilterQuery<ClienteDocument> = { email: emailNormalizado };
+    if (excluirClienteId) {
+      filter._id = { $ne: excluirClienteId };
+    }
+    const existente = await this.clienteModel.findOne(filter).exec();
+    if (existente) {
+      throw new ConflictException('Ya existe un cliente con ese email');
+    }
+  }
+
+  async create(dto: CreateClienteDto, estudioId: Types.ObjectId): Promise<Record<string, unknown>> {
     const cuit = normalizeCuit(dto.cuit);
     const existing = await this.clienteModel.findOne({ cuit }).exec();
     if (existing) {
       throw new ConflictException('Ya existe un cliente con ese CUIT');
     }
+    if (dto.email) {
+      await this.validarEmailUnico(dto.email);
+    }
     await this.validarMotorIaPreferido(dto, estudioId);
 
-    return this.clienteModel.create({ ...dto, cuit, estudioId });
+    const { credencialesArca, credencialesArba, credencialesAgip, ...rest } = dto;
+    const cliente = await this.clienteModel.create({
+      ...rest,
+      cuit,
+      estudioId,
+      credencialesArca: this.aplicarCredencial(undefined, credencialesArca),
+      credencialesArba: this.aplicarCredencial(undefined, credencialesArba),
+      credencialesAgip: this.aplicarCredencial(undefined, credencialesAgip),
+    });
+    const obj =
+      typeof (cliente as ClienteDocument).toObject === 'function'
+        ? ((cliente as ClienteDocument).toObject() as unknown as Record<string, unknown>)
+        : ({ ...cliente } as Record<string, unknown>);
+    return this.sanitizeCredenciales(obj);
   }
 
   async update(
@@ -204,8 +310,11 @@ export class ClientesService {
     estudioId: Types.ObjectId,
   ): Promise<Record<string, unknown>> {
     const cliente = await this.findOneDocument(id, estudioId);
+    if (dto.email && dto.email.toLowerCase().trim() !== cliente.email) {
+      await this.validarEmailUnico(dto.email, cliente._id);
+    }
     await this.validarMotorIaPreferido(dto, estudioId);
-    const { responsableIds, ...rest } = dto;
+    const { responsableIds, credencialesArca, credencialesArba, credencialesAgip, ...rest } = dto;
     Object.assign(cliente, { ...rest, cuit: dto.cuit ? normalizeCuit(dto.cuit) : cliente.cuit });
     // Se maneja aparte del spread de arriba: `undefined` (campo ausente del
     // body) = no tocar la asignación actual; `[]` = vaciarla; un array con
@@ -218,12 +327,28 @@ export class ClientesService {
         (responsableId) => new Types.ObjectId(responsableId),
       );
     }
+    // Mismo criterio: `undefined` = no tocar; con el campo presente,
+    // `aplicarCredencial` decide si reemplaza la contraseña o solo el
+    // usuario (ver el comentario ahí).
+    if (credencialesArca !== undefined) {
+      cliente.credencialesArca = this.aplicarCredencial(cliente.credencialesArca, credencialesArca);
+    }
+    if (credencialesArba !== undefined) {
+      cliente.credencialesArba = this.aplicarCredencial(cliente.credencialesArba, credencialesArba);
+    }
+    if (credencialesAgip !== undefined) {
+      cliente.credencialesAgip = this.aplicarCredencial(cliente.credencialesAgip, credencialesAgip);
+    }
     await cliente.save();
     // `responsableIds` quedó con ObjectIds sin poblar tras el `save()` (se
     // reasignó arriba con IDs crudos) — hace falta volver a poblarlo antes
     // de armar `responsablesEfectivos`, si no `attachResponsablesEfectivos`
-    // ve objetos sin `nombre`/`email`.
+    // ve objetos sin `nombre`/`email`. Mismo problema si `responsableTitularId`
+    // vino en el body: `Object.assign` lo reasigna como ObjectId crudo
+    // (Mongoose lo castea solo), perdiendo el populate que traía de
+    // `findOneDocument`.
     await cliente.populate('responsableIds', 'nombre email');
+    await cliente.populate('responsableTitularId', 'nombre email');
     const [withResponsables] = await this.attachResponsablesEfectivos([cliente], estudioId);
     return withResponsables;
   }
@@ -261,32 +386,51 @@ export class ClientesService {
       );
     }
 
-    const yaTieneUsuario = await this.userModel.findOne({ clienteId: cliente._id }).exec();
-    if (yaTieneUsuario) {
+    const emailLogin = cliente.email.toLowerCase().trim();
+    const usuarioExistente = await this.userModel.findOne({ clienteId: cliente._id }).exec();
+    if (usuarioExistente && usuarioExistente.activo) {
       throw new ConflictException('Este cliente ya tiene un usuario de portal creado');
     }
 
-    const emailLogin = cliente.email.toLowerCase().trim();
-    const yaExisteEseLogin = await this.userModel.findOne({ email: emailLogin }).exec();
+    const yaExisteEseLogin = await this.userModel
+      .findOne({ email: emailLogin, _id: { $ne: usuarioExistente?._id } })
+      .exec();
     if (yaExisteEseLogin) {
       throw new ConflictException('Ya existe un usuario con ese email');
     }
 
-    const rolCliente = await this.roleModel.findOne({ nombre: 'cliente' }).exec();
-    if (!rolCliente) {
-      throw new BadRequestException('No se encontró el rol de sistema "cliente"');
-    }
-
     const password = generarPasswordSegura();
-    const usuario = await this.userModel.create({
-      email: emailLogin,
-      passwordHash: await argon2.hash(password),
-      credencialesGeneradas: true,
-      nombre: cliente.nombre,
-      roleIds: [rolCliente._id],
-      clienteId: cliente._id,
-      estudioId,
-    });
+    let usuario: UserDocument;
+
+    if (usuarioExistente) {
+      // Repara un usuario de portal viejo y desactivado (ej. login institucional
+      // armado antes del cambio a email real, ver el CLAUDE.md del Frontend "el
+      // portal de Cliente deja de tener login institucional") en vez de chocar con
+      // el `ConflictException` de arriba — casos reales: Agrocentral SRL, Alonso
+      // Federico, Alvarez Nicolas, sin ningún email real cargado en ese momento.
+      usuarioExistente.email = emailLogin;
+      usuarioExistente.emailInstitucional = undefined;
+      usuarioExistente.passwordHash = await argon2.hash(password);
+      usuarioExistente.credencialesGeneradas = true;
+      usuarioExistente.activo = true;
+      await usuarioExistente.save();
+      usuario = usuarioExistente;
+    } else {
+      const rolCliente = await this.roleModel.findOne({ nombre: 'cliente' }).exec();
+      if (!rolCliente) {
+        throw new BadRequestException('No se encontró el rol de sistema "cliente"');
+      }
+
+      usuario = await this.userModel.create({
+        email: emailLogin,
+        passwordHash: await argon2.hash(password),
+        credencialesGeneradas: true,
+        nombre: cliente.nombre,
+        roleIds: [rolCliente._id],
+        clienteId: cliente._id,
+        estudioId,
+      });
+    }
 
     const emailEnviado = await this.mailService.enviarCredenciales({
       to: emailLogin,
@@ -338,5 +482,34 @@ export class ClientesService {
       : false;
 
     return { usuario, password, emailEnviado };
+  }
+
+  /**
+   * "Ver contraseña" de Credenciales (ARCA/ARBA/AGIP) — pedido explícito del
+   * usuario: a diferencia de la contraseña de login del portal/Personal
+   * (nunca recuperable, solo regenerable, ver `regenerarPasswordPortal`),
+   * ARCA/ARBA/AGIP son credenciales del estudio para entrar a un sitio
+   * externo (el organismo fiscal) — el equipo necesita poder volver a
+   * escribirlas ahí, así que tienen que ser recuperables de verdad. Por eso
+   * `SecretCipherService` las cifra reversible (AES-256-GCM) en vez de
+   * hashearlas. Nunca se descifran como parte de `GET /clientes` (lista o
+   * detalle, ver `sanitizeCredenciales`) — solo acá, bajo demanda, cuando el
+   * usuario hace clic en el ojo de un organismo puntual.
+   */
+  async revelarCredencial(
+    id: string,
+    organismo: 'arca' | 'arba' | 'agip',
+    estudioId: Types.ObjectId,
+  ): Promise<{ usuario?: string; password: string }> {
+    const cliente = await this.findOneDocument(id, estudioId);
+    const campo = `credenciales${organismo[0].toUpperCase()}${organismo.slice(1)}` as (typeof ORGANISMOS)[number];
+    const credencial = cliente[campo];
+    if (!credencial?.passwordCifrada) {
+      throw new NotFoundException(`Este cliente todavía no tiene una contraseña de ${organismo.toUpperCase()} cargada`);
+    }
+    return {
+      usuario: credencial.usuario,
+      password: this.secretCipher.decrypt(credencial.passwordCifrada),
+    };
   }
 }

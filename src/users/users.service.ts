@@ -353,12 +353,19 @@ export class UsersService {
       telefono: user.telefono ?? null,
       regimenFiscal: user.regimenFiscal ?? null,
       roles,
+      permisosExtra: user.permisosExtra ?? [],
+      permisosDenegados: user.permisosDenegados ?? [],
       activo: user.activo,
       avatarDataUrl:
         user.avatarContentType && user.avatarBase64
           ? `data:${user.avatarContentType};base64,${user.avatarBase64}`
           : null,
       genero: user.genero ?? null,
+      // Para que el selector de "Responsable" de `ClienteFormDialog` (Frontend)
+      // pueda preseleccionar solo al/los titular/es como default, sin tener
+      // que pedirle a `ClientesService` esa información aparte — mismo
+      // criterio que ya usa `ClientesService.findResponsablesAutomaticos`.
+      esTitular: Boolean(user.esTitular),
     };
   }
 

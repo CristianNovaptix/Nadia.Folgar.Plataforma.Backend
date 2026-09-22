@@ -1,3 +1,5 @@
+import { PermissionCode } from '../../common/constants/permissions';
+
 /**
  * Forma pública de un usuario para pantallas de administración (hoy: Personal
  * del Frontend, `GET/POST/PATCH /users`) — ver `UsersService.toSummary`.
@@ -28,6 +30,14 @@ export interface UserSummary {
   telefono: string | null;
   regimenFiscal: string | null;
   roles: { _id: string; nombre: string }[];
+  /**
+   * Excepciones de permisos de este usuario, por encima/por debajo de lo que
+   * ya dan sus roles — ver el comentario en `user.schema.ts`. `AuthService.
+   * buildUserContext` es quien realmente las aplica al token; acá solo se
+   * exponen para que la pantalla de administración las pueda editar.
+   */
+  permisosExtra: PermissionCode[];
+  permisosDenegados: PermissionCode[];
   activo: boolean;
   /** `data:<contentType>;base64,<...>` listo para un <img src>, o null si no cargó foto. */
   avatarDataUrl: string | null;
@@ -38,4 +48,6 @@ export interface UserSummary {
    * Personal; sin él, cae a la forma masculina.
    */
   genero: 'masculino' | 'femenino' | null;
+  /** Dueño/a real del estudio (`User.esTitular`) — ver el comentario en `user.schema.ts`. */
+  esTitular: boolean;
 }
