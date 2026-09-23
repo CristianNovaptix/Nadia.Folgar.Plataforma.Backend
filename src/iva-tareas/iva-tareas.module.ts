@@ -7,6 +7,9 @@ import { TareaPresentacion, TareaPresentacionSchema } from './schemas/tarea-pres
 import { TareaAdjunto, TareaAdjuntoSchema } from './schemas/tarea-adjunto.schema';
 import { IvaTareasService } from './iva-tareas.service';
 import { IvaTareasController } from './iva-tareas.controller';
+import { AlertasTareasController } from './alertas-tareas.controller';
+import { AlertasTareasService } from './alertas-tareas.service';
+import { AlertaTareaEstado, AlertaTareaEstadoSchema } from './schemas/alerta-tarea-estado.schema';
 import { DocumentoTextoExtractorService } from './documento-texto-extractor.service';
 import { AI_TAREAS_DOCUMENTO_PORT } from './ports/ai-tareas-documento.port';
 import { AiTareasDocumentoStubAdapter } from './adapters/ai-tareas-documento-stub.adapter';
@@ -33,11 +36,13 @@ import { OpenAiTareasDocumentoAdapter } from './adapters/openai-tareas-documento
       { name: TareaAdjunto.name, schema: TareaAdjuntoSchema },
       { name: Cliente.name, schema: ClienteSchema },
       { name: User.name, schema: UserSchema },
+      { name: AlertaTareaEstado.name, schema: AlertaTareaEstadoSchema },
     ]),
   ],
-  controllers: [IvaTareasController],
+  controllers: [IvaTareasController, AlertasTareasController],
   providers: [
     IvaTareasService,
+    AlertasTareasService,
     DocumentoTextoExtractorService,
     {
       provide: AI_TAREAS_DOCUMENTO_PORT,

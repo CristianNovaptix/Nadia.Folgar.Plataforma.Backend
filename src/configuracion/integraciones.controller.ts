@@ -11,6 +11,7 @@ import { ProveedorIA } from '../common/enums/proveedor-ia.enum';
 import { IntegracionesService } from './integraciones.service';
 import { ConectarIntegracionDto } from './dto/conectar-integracion.dto';
 import { SetMotorPorDefectoDto } from './dto/set-motor-por-defecto.dto';
+import { UpdateConfigNotificacionesDto } from './dto/update-config-notificaciones.dto';
 
 @ApiTags('configuracion')
 @ApiBearerAuth()
@@ -48,6 +49,27 @@ export class IntegracionesController {
     return this.integracionesService.setMotorPorDefecto(
       new Types.ObjectId(user.estudioId),
       dto.proveedor,
+    );
+  }
+
+  /**
+   * Sin `@Permissions` a propósito: cualquier usuario logueado lo lee, porque la
+   * campanita del Inicio necesita la anticipación para pedir las tareas por vencer.
+   */
+  @Get('notificaciones')
+  obtenerNotificaciones(@CurrentUser() user: AuthenticatedUser) {
+    return this.integracionesService.obtenerConfigNotificaciones(new Types.ObjectId(user.estudioId));
+  }
+
+  @Patch('notificaciones')
+  @Permissions(PERMISSIONS.CONFIGURACION_WRITE)
+  actualizarNotificaciones(
+    @Body() dto: UpdateConfigNotificacionesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.integracionesService.actualizarConfigNotificaciones(
+      new Types.ObjectId(user.estudioId),
+      dto.anticipacionAvisoTareasHoras,
     );
   }
 }

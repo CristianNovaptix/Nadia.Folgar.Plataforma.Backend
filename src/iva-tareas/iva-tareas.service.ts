@@ -349,6 +349,27 @@ export class IvaTareasService {
   }
 
   /**
+   * Tarjetas no presentadas, de cualquier período, ya vencidas o que vencen
+   * dentro de `horas` — base de la campanita del Inicio (ver `AlertasTareasService`).
+   */
+  async findAlertasVencimiento(
+    estudioId: Types.ObjectId,
+    horas: number,
+    ahora: Date = new Date(),
+  ): Promise<TareaPresentacionDocument[]> {
+    const limite = new Date(ahora.getTime() + horas * 60 * 60 * 1000);
+    return this.tareaModel
+      .find({
+        estudioId,
+        estado: { $ne: EstadoTarea.PRESENTADO },
+        fechaHasta: { $ne: null, $lte: limite },
+      })
+      .sort({ fechaHasta: 1 })
+      .populate('clienteId', 'nombre cuit')
+      .exec();
+  }
+
+  /**
    * Agrega `adjuntosCount` y `portadaAdjunto` (el contenido del adjunto de
    * portada nada más, no de todos) a cada tarea de un listado — usado tanto
    * por `findKanban` como por `findAllTareas` para que la tarjeta pueda

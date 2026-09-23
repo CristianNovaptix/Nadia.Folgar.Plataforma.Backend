@@ -32,6 +32,7 @@ const envSchema = z.object({
 
   THROTTLE_TTL: z.coerce.number().int().positive().default(60000),
   THROTTLE_LIMIT: z.coerce.number().int().positive().default(300),
+  HTTP_LOGS: z.enum(['true', 'false', '1', '0']).optional(),
 
   /**
    * Selección del adapter de IA para extractos-ia (`AiExtractionPort`).

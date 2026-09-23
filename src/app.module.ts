@@ -28,7 +28,10 @@ import { FacturacionElectronicaModule } from './facturacion-electronica/facturac
 import { AsistenteIaModule } from './asistente-ia/asistente-ia.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { HealthModule } from './health/health.module';
+import { ArcaSyncModule } from './arca-sync/arca-sync.module';
 import { useRedisQueues } from './config/queue-mode';
+
+const httpLogsEnabled = (value?: string): boolean => value === 'true' || value === '1';
 
 const queueImports = useRedisQueues()
   ? [
@@ -57,6 +60,15 @@ const queueImports = useRedisQueues()
       useFactory: (configService: ConfigService) => ({
         pinoHttp: {
           level: configService.get<string>('NODE_ENV') === 'production' ? 'info' : 'debug',
+          autoLogging:
+            configService.get<string>('NODE_ENV') === 'production' ||
+            httpLogsEnabled(configService.get<string>('HTTP_LOGS')),
+          redact: [
+            'req.headers.authorization',
+            'req.headers.cookie',
+            'req.headers["x-api-key"]',
+            'req.headers["set-cookie"]',
+          ],
           transport:
             configService.get<string>('NODE_ENV') === 'production'
               ? undefined
@@ -108,6 +120,7 @@ const queueImports = useRedisQueues()
     AsistenteIaModule,
     ConfiguracionModule,
     HealthModule,
+    ArcaSyncModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalHttpExceptionFilter },

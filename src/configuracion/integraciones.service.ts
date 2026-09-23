@@ -105,6 +105,26 @@ export class IntegracionesService {
     return estudio;
   }
 
+  async obtenerConfigNotificaciones(
+    estudioId: Types.ObjectId,
+  ): Promise<{ anticipacionAvisoTareasHoras: number }> {
+    const estudio = await this.estudioModel.findById(estudioId).exec();
+    return { anticipacionAvisoTareasHoras: estudio?.anticipacionAvisoTareasHoras ?? 48 };
+  }
+
+  async actualizarConfigNotificaciones(
+    estudioId: Types.ObjectId,
+    anticipacionAvisoTareasHoras: number,
+  ): Promise<{ anticipacionAvisoTareasHoras: number }> {
+    const estudio = await this.estudioModel
+      .findByIdAndUpdate(estudioId, { anticipacionAvisoTareasHoras }, { new: true })
+      .exec();
+    if (!estudio) {
+      throw new NotFoundException('Estudio no encontrado');
+    }
+    return { anticipacionAvisoTareasHoras: estudio.anticipacionAvisoTareasHoras };
+  }
+
   /** Uso interno de `AiProviderResolverService` — nunca se expone vía controller. */
   async obtenerCredencialDescifrada(
     estudioId: Types.ObjectId,

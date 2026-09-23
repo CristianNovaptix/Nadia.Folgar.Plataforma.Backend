@@ -35,6 +35,14 @@ export class Estudio {
    */
   @Prop({ type: String, enum: ProveedorIA })
   motorIaPorDefecto?: ProveedorIA;
+
+  /**
+   * Con cuántas horas de anticipación la campanita del Inicio avisa que una
+   * tarjeta del tablero de Tareas está por vencer (`fechaHasta`). Editable en
+   * Configuración → Notificaciones.
+   */
+  @Prop({ default: 48 })
+  anticipacionAvisoTareasHoras: number;
 }
 
 export const EstudioSchema = SchemaFactory.createForClass(Estudio);
