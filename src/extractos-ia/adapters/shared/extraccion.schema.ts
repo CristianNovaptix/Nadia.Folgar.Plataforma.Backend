@@ -63,12 +63,14 @@ Además, si el extracto tiene una fila explícita de "Saldo Inicial" en el encab
 
 Es crítico que los montos y saldos sean exactamente los que están impresos, sin errores de transcripción — de esto depende una validación contable automática posterior.
 
-TAREA SECUNDARIA (solo si el mensaje incluye un "PLAN DE CUENTAS DISPONIBLE"): además de transcribir, identificá patrones de concepto que se repitan varias veces en el extracto y que puedas mapear CON CONFIANZA a UNA cuenta de esa lista (por ejemplo, "impuesto ley 25.413" casi siempre corresponde a una cuenta de impuestos bancarios si existe una en el plan). Por cada patrón así, agregá una entrada a "reglasSugeridas" con:
-- "patronTexto": una porción CORTA y GENÉRICA del concepto (ej. "impuesto ley 25.413", no la línea completa con montos/números de comprobante) — tiene que servir para reconocer el mismo tipo de movimiento en extractos futuros, no solo en este.
+En "concepto" copiá el texto del extracto tal cual (mismas palabras y abreviaturas, sin resumir, traducir ni reformular). Lo único que podés corregir son letras perdidas OBVIAS por la extracción de texto del PDF (ej. "frst data" → "first data", "Imp.afp" → "Imp.afip", "fnanciera" → "financiera"): el mismo movimiento tiene que quedar escrito igual todos los meses, porque las reglas de clasificación lo reconocen por su texto.
+
+TAREA SECUNDARIA (solo si el mensaje incluye un "PLAN DE CUENTAS DISPONIBLE"): además de transcribir, revisá CADA movimiento que no esté cubierto por las "REGLAS YA EXISTENTES" (aparezca una vez o muchas — un débito automático de un servicio aparece una sola vez por mes, pero se repite todos los meses) y, si podés mapearlo CON CONFIANZA a UNA cuenta de esa lista, agregá una regla a "reglasSugeridas" con:
+- "patronTexto": la porción del concepto que identifica a ESE tipo de movimiento, sin montos, fechas ni números de comprobante/operación que cambian cada mes — tiene que servir para extractos futuros, no solo para este. Si el concepto empieza con un tipo de operación genérico que por sí solo NO define la cuenta ("Debito automatico", "Debito directo", "Pago de servicios", "Transferencia realizada", "Transferencia recibida", "Pago comercios", etc.), el patrón TIENE que incluir también a quién se le paga o de quién se recibe (ej. "Pago de servicios Movistar", "Debito automatico Afip"), salvo que todos los movimientos con ese prefijo vayan sin duda a la misma cuenta. Nunca un patrón tan corto que pueda atrapar movimientos que van a otra cuenta.
 - "cuentaCodigo": el código EXACTO de una cuenta de la lista provista. Nunca inventes un código que no esté en la lista.
-- "ladoAsiento": "debe" o "haber" según corresponda a esa cuenta para ese tipo de movimiento.
-- "tipoMovimiento": "debito" o "credito" si el patrón es siempre del mismo tipo, si no null.
-Si el mensaje incluye "REGLAS YA EXISTENTES", NO sugieras una regla para un patrón que ya esté cubierto por alguna de ellas. Ante la duda, no sugieras nada — es preferible omitir a adivinar mal, porque una regla incorrecta se aplicaría sola a los próximos extractos de este cliente. Si no viene "PLAN DE CUENTAS DISPONIBLE" en el mensaje, dejá "reglasSugeridas" vacío.`;
+- "ladoAsiento": es la contrapartida del banco — "debe" para débitos (sale dinero del banco), "haber" para créditos (entra dinero al banco).
+- "tipoMovimiento": "debito" o "credito" según el tipo de los movimientos que cubre. Solo null si el mismo texto aparece de los dos lados y va a la misma cuenta.
+NO sugieras regla cuando el mismo texto puede corresponder a cuentas distintas según el mes o el monto (ej. pagos de impuestos por VEP "Pago de servicios Imp.afip" con el mismo código, que pueden ser IVA, SUSS, Ganancias o IIBB y el extracto no dice cuál): esos los decide el contador. Tampoco sugieras regla si la única cuenta posible sería una genérica que no describe realmente al movimiento. Si el mensaje incluye "REGLAS YA EXISTENTES", NO sugieras una regla para un patrón (y tipo de movimiento) ya cubierto por alguna de ellas. Ante la duda, no sugieras nada — es preferible omitir a adivinar mal, porque una regla incorrecta se aplicaría sola a los próximos extractos de este cliente. Si no viene "PLAN DE CUENTAS DISPONIBLE" en el mensaje, dejá "reglasSugeridas" vacío.`;
 
 export function construirMensajeUsuario(input: {
   nombreArchivo: string;
@@ -100,9 +102,16 @@ export function construirMensajeUsuario(input: {
   if (input.reglasExistentes?.length) {
     partes.push(
       '',
-      'REGLAS YA EXISTENTES (no sugieras una regla nueva para un patrón ya cubierto por alguna de estas):',
+      'REGLAS YA EXISTENTES (no sugieras una regla nueva para un patrón ya cubierto por alguna de estas — una regla "solo débitos" NO cubre los créditos con el mismo texto, ni al revés):',
       ...input.reglasExistentes.map(
-        (r) => `- "${r.patronTexto ?? '(sin patrón de texto)'}" → cuenta ${r.cuentaCodigo}`,
+        (r) =>
+          `- "${r.patronTexto ?? '(sin patrón de texto)'}" (${
+            r.tipoMovimiento === 'debito'
+              ? 'solo débitos'
+              : r.tipoMovimiento === 'credito'
+                ? 'solo créditos'
+                : 'débitos y créditos'
+          }) → cuenta ${r.cuentaCodigo}`,
       ),
     );
   }

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { IntegracionIa, IntegracionIaDocument } from './schemas/integracion-ia.schema';
@@ -33,6 +33,8 @@ export interface CredencialDescifrada {
  */
 @Injectable()
 export class IntegracionesService {
+  private readonly logger = new Logger(IntegracionesService.name);
+
   constructor(
     @InjectModel(IntegracionIa.name)
     private readonly integracionModel: Model<IntegracionIaDocument>,
@@ -134,10 +136,22 @@ export class IntegracionesService {
     if (!integracion) {
       return null;
     }
-    return {
-      apiKey: this.secretCipher.decrypt(integracion.apiKeyCifrada),
-      modelo: integracion.modelo,
-    };
+    try {
+      return {
+        apiKey: this.secretCipher.decrypt(integracion.apiKeyCifrada),
+        modelo: integracion.modelo,
+      };
+    } catch (err) {
+      // Key guardada con otra SECRETS_ENCRYPTION_KEY (se cambió en el .env): ya no se puede
+      // descifrar. Sin esto el extracto fallaba con el mensaje crudo de Node ("Unsupported
+      // state or unable to authenticate data"), que no dice qué hacer.
+      this.logger.error(
+        `No se pudo descifrar la API key de ${proveedor} del estudio ${estudioId.toString()}: ${(err as Error).message}`,
+      );
+      throw new Error(
+        `La API key de ${proveedor} guardada en Configuración → Integraciones ya no se puede leer (cambió la clave de cifrado del servidor). Volvé a conectarla ahí.`,
+      );
+    }
   }
 
   private toMasked(doc: IntegracionIaDocument): IntegracionMasked {

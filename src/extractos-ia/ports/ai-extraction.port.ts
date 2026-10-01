@@ -44,6 +44,8 @@ export interface CuentaContableDisponible {
 /** Regla de clasificación ya activa, de contexto — para que la IA no repita sugerencias ya cubiertas. */
 export interface ReglaExistenteResumen {
   patronTexto?: string;
+  /** Si la regla solo aplica a débitos o a créditos — sin esto la IA creía cubierto, p. ej., un "Pago comercios" débito por existir la regla de créditos. */
+  tipoMovimiento?: TipoMovimientoExtraido;
   cuentaCodigo: string;
 }
 

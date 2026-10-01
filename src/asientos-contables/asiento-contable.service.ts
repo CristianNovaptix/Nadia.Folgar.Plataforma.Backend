@@ -123,6 +123,7 @@ export class AsientoContableService {
       ladoAsiento: r.ladoAsiento,
       prioridad: r.prioridad,
       activa: r.activa,
+      procedencia: r.procedencia,
       cuentaContableSecundariaId: r.cuentaContableSecundariaId?.toString(),
       porcentajeSecundario: r.porcentajeSecundario,
     }));

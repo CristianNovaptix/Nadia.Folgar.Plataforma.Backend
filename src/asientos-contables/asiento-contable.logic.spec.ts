@@ -482,3 +482,73 @@ describe('construirAsientosMensuales', () => {
     expect(lineaBancoAbril).toMatchObject({ lado: 'haber', monto: 200 });
   });
 });
+
+describe('clasificarMovimientos — texto normalizado y especificidad', () => {
+  it('matchea ignorando tildes, puntuación y espacios repetidos', () => {
+    const movimientos = [movimiento({ concepto: 'Débito  automático Cablevisión -0041316614' })];
+    const reglas = [regla({ patronTexto: 'Debito automatico cablevision' })];
+
+    const [resultado] = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
+
+    expect(resultado.reglaId).toBe('regla-1');
+  });
+
+  it('un patrón hecho solo de signos no matchea todo', () => {
+    const [resultado] = clasificarMovimientos(
+      [movimiento()],
+      [regla({ patronTexto: '...' })],
+      CUENTA_BANCARIA_ID,
+    );
+    expect(resultado.cuentaContableId).toBeNull();
+  });
+
+  it('a igual prioridad gana el patrón más específico, sin importar el orden de las reglas', () => {
+    const movimientos = [
+      movimiento({ concepto: 'Debito automatico Afip 5000 625 de-20173233184' }),
+    ];
+    const reglas = [
+      regla({
+        _id: 'generica',
+        patronTexto: 'Debito automatico',
+        cuentaContableId: 'gastos',
+        prioridad: 500,
+      }),
+      regla({
+        _id: 'afip',
+        patronTexto: 'Debito automatico Afip',
+        cuentaContableId: 'proveedores',
+        prioridad: 500,
+      }),
+    ];
+
+    const [resultado] = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
+
+    expect(resultado.reglaId).toBe('afip');
+  });
+});
+
+describe('clasificarMovimientos — regla de una persona vs. regla de la IA', () => {
+  it('a igual prioridad, la regla cargada por una persona le gana a la de la IA aunque sea menos específica', () => {
+    const movimientos = [movimiento({ concepto: 'Impuesto Ley 25.413 Ali Gral s/Creditos' })];
+    const reglas = [
+      regla({
+        _id: 'ia',
+        patronTexto: 'Impuesto Ley 25.413 Ali Gral s/Creditos',
+        cuentaContableId: 'cuenta-147',
+        prioridad: 500,
+        procedencia: 'ia',
+      }),
+      regla({
+        _id: 'manual',
+        patronTexto: 'S/Creditos',
+        cuentaContableId: 'cuenta-1129',
+        prioridad: 500,
+        procedencia: 'manual',
+      }),
+    ];
+
+    const [resultado] = clasificarMovimientos(movimientos, reglas, CUENTA_BANCARIA_ID);
+
+    expect(resultado.reglaId).toBe('manual');
+  });
+});

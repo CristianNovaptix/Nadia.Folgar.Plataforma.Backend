@@ -22,7 +22,7 @@ import { UpdateExtractoDto } from './dto/update-extracto.dto';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
 import { conTimeout } from '../common/utils/con-timeout';
 import { CuentasBancariasService } from '../cuentas-bancarias/cuentas-bancarias.service';
-import { ExtractoDeteccionService } from './extracto-deteccion.service';
+import { BancoDetectado, ExtractoDeteccionService } from './extracto-deteccion.service';
 import { ProcesarExtractoJobData } from './extractos-ia.processor';
 import { construirMovimientosConValidacion, determinarEstadoFinal } from './validacion-saldo';
 
@@ -57,6 +57,9 @@ export interface AnalisisExtractoResultado {
   tieneCapaDeTexto: boolean;
   cuitDetectado?: string;
   periodoDetectado?: string;
+  /** "YYYY-MM-DD" — la fecha "hasta" del extracto, para mostrar el día exacto en el Frontend. */
+  fechaHastaDetectada?: string;
+  bancoDetectado?: BancoDetectado;
 }
 
 /** Subtotal de movimientos agrupados por concepto (checklist FOLGAR-008: "agrupa en subtotales por concepto"). */
@@ -108,8 +111,7 @@ export class ExtractosIaService {
       return { tieneCapaDeTexto: false };
     }
 
-    const { cuitDetectado, periodoDetectado } = this.extractoDeteccionService.detectar(texto);
-    return { tieneCapaDeTexto: true, cuitDetectado, periodoDetectado };
+    return { tieneCapaDeTexto: true, ...this.extractoDeteccionService.detectar(texto) };
   }
 
   async cargarExtracto(

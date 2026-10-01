@@ -34,7 +34,48 @@ describe('ExtractoDeteccionService', () => {
     });
   });
 
+  describe('detección de banco', () => {
+    it('elige el banco más mencionado, no uno que aparece en un movimiento', () => {
+      const texto =
+        'Banco Provincia\nExtracto de Cuenta\nDep: BANCO MACRO\nBanco Pcia - Cta cte\nProvincia Net';
+      expect(service.detectar(texto).bancoDetectado?.nombre).toBe('Provincia');
+    });
+
+    it('no detecta banco si no se menciona ninguno conocido', () => {
+      expect(service.detectar('Resumen de cuenta').bancoDetectado).toBeUndefined();
+    });
+  });
+
   describe('detección de período', () => {
+    it('toma el mes de la fecha "Hasta" (Santander, año de 2 dígitos)', () => {
+      const texto = 'Período\nDesde: 29/06/24\nHasta: 31/07/24\n01/07/24 Mov\n02/06/24 Mov';
+      expect(service.detectar(texto)).toMatchObject({
+        periodoDetectado: '2024-07',
+        fechaHastaDetectada: '2024-07-31',
+      });
+    });
+
+    it('toma el "al:" de un rango "del: ... al: ..." (Credicoop)', () => {
+      const texto = 'Resumen: 25004 del: 01/04/2025 al: 30/04/2025 Cta. 191';
+      expect(service.detectar(texto).periodoDetectado).toBe('2025-04');
+    });
+
+    it('toma el final de "PERIODO (dd-mm-yyyy/dd-mm-yyyy)" (Provincia)', () => {
+      const texto = 'COM. MANT. POR 034 MOV. PERIODO (27-03-2025/28-04-2025) -37400.00';
+      expect(service.detectar(texto).periodoDetectado).toBe('2025-04');
+    });
+
+    it('toma el segundo extremo de "ENTRE EL ... Y EL ..." (Galicia)', () => {
+      const texto = 'PERIODO COMPRENDIDO ENTRE EL 30-12-2024 Y EL 31-01-2025';
+      expect(service.detectar(texto).periodoDetectado).toBe('2025-01');
+    });
+
+    it('no toma un "HASTA" sin dos puntos de la descripción de un movimiento', () => {
+      const texto =
+        'COMISION DESDE 01-03-2025 HASTA 31-03-2025\n10/04/2025 a\n11/04/2025 b\n12/04/2025 c';
+      expect(service.detectar(texto).periodoDetectado).toBe('2025-04');
+    });
+
     it('detecta el período por la mención explícita "Período ... dd/mm/yyyy"', () => {
       const texto = 'Resumen de cuenta\nPeríodo: 01/08/2026 al 31/08/2026\nSaldo inicial: 100000';
       expect(service.detectar(texto).periodoDetectado).toBe('2026-08');

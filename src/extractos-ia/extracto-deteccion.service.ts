@@ -5,6 +5,46 @@ export interface EncabezadoDetectado {
   cuitDetectado?: string;
   /** Mes que cubre el extracto, formato "YYYY-MM", si se pudo inferir con confianza. */
   periodoDetectado?: string;
+  /** Fecha "hasta" del rango del extracto, formato "YYYY-MM-DD" — de ahí sale `periodoDetectado`. */
+  fechaHastaDetectada?: string;
+  /** Banco emisor del extracto (el más mencionado en el texto) — para elegir la cuenta bancaria. */
+  bancoDetectado?: BancoDetectado;
+}
+
+export interface BancoDetectado {
+  nombre: string;
+  /** Formas en que puede aparecer escrito (en el PDF o en `CuentaBancaria.banco`), normalizadas. */
+  palabrasClave: string[];
+}
+
+/**
+ * Bancos conocidos y cómo se los nombra. Se elige el que más veces aparece en el texto, porque un
+ * extracto también menciona otros bancos en sus movimientos (transferencias, cheques de otra
+ * entidad), pero ninguno tantas veces como el propio.
+ */
+const BANCOS: BancoDetectado[] = [
+  { nombre: 'Santander', palabrasClave: ['santander'] },
+  { nombre: 'Galicia', palabrasClave: ['galicia'] },
+  { nombre: 'Provincia', palabrasClave: ['provincia', 'pcia', 'bapro'] },
+  { nombre: 'Credicoop', palabrasClave: ['credicoop'] },
+  { nombre: 'Nación', palabrasClave: ['banco de la nacion', 'banco nacion', 'bna'] },
+  { nombre: 'Macro', palabrasClave: ['macro'] },
+  { nombre: 'BBVA', palabrasClave: ['bbva', 'frances'] },
+  { nombre: 'ICBC', palabrasClave: ['icbc'] },
+  { nombre: 'HSBC', palabrasClave: ['hsbc'] },
+  { nombre: 'Patagonia', palabrasClave: ['patagonia'] },
+  { nombre: 'Ciudad', palabrasClave: ['banco ciudad', 'ciudad de buenos aires'] },
+  { nombre: 'Supervielle', palabrasClave: ['supervielle'] },
+  { nombre: 'Comafi', palabrasClave: ['comafi'] },
+  { nombre: 'Itaú', palabrasClave: ['itau'] },
+  { nombre: 'Brubank', palabrasClave: ['brubank'] },
+  { nombre: 'Hipotecario', palabrasClave: ['hipotecario'] },
+  { nombre: 'Industrial', palabrasClave: ['bind', 'banco industrial'] },
+  { nombre: 'Mercado Pago', palabrasClave: ['mercado pago', 'mercadopago'] },
+];
+
+function normalizar(texto: string): string {
+  return texto.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 }
 
 /** Cantidad mínima de fechas repetidas con el mismo mes/año para inferir el período por moda. */
@@ -13,6 +53,23 @@ const MINIMO_REPETICIONES_FECHA = 2;
 const REGEX_CUIT = /(\d{2})-?(\d{8})-?(\d{1})/g;
 const REGEX_FECHA = /(\d{2})[/-](\d{2})[/-](\d{4})/g;
 const REGEX_PERIODO_CON_FECHA = /per[ií]odo[^\d]{0,15}\d{1,2}[/-](\d{2})[/-](\d{4})/i;
+
+const FECHA = String.raw`\d{1,2}[/-]\d{1,2}[/-]\d{2,4}`;
+const FECHA_CAPTURADA = String.raw`(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})`;
+
+/**
+ * Fecha "hasta" del rango que cubre el extracto — el período es el mes de esa fecha.
+ * Formatos reales vistos: Santander "Hasta: 31/07/24", Credicoop "del: 01/04/2025 al:
+ * 30/04/2025", Galicia "ENTRE EL 30-12-2024 Y EL 31-01-2025". "Hasta" exige los dos puntos
+ * para no tomar descripciones de movimientos ("COMISION ... DESDE 01-03-2025 HASTA 31-03").
+ */
+const REGEXES_FECHA_HASTA = [
+  new RegExp(String.raw`hasta\s*:\s*${FECHA_CAPTURADA}`, 'i'),
+  new RegExp(String.raw`\bdel\s*:?\s*${FECHA}\s+al\s*:?\s*${FECHA_CAPTURADA}`, 'i'),
+  new RegExp(String.raw`\bentre\s+el\s+${FECHA}\s+y\s+el\s+${FECHA_CAPTURADA}`, 'i'),
+  // Provincia: "PERIODO (27-03-2025/28-04-2025)".
+  new RegExp(String.raw`per[ií]odo[^\d]{0,15}${FECHA}\s*(?:/|-|al?)\s*${FECHA_CAPTURADA}`, 'i'),
+];
 
 const MESES_ES: Record<string, string> = {
   enero: '01',
@@ -51,10 +108,45 @@ const REGEX_PERIODO_CON_MES = new RegExp(
 @Injectable()
 export class ExtractoDeteccionService {
   detectar(texto: string): EncabezadoDetectado {
+    const fechaHastaDetectada = this.detectarFechaHasta(texto);
     return {
       cuitDetectado: this.detectarCuit(texto),
-      periodoDetectado: this.detectarPeriodo(texto),
+      periodoDetectado: fechaHastaDetectada?.slice(0, 7) ?? this.detectarPeriodo(texto),
+      fechaHastaDetectada,
+      bancoDetectado: this.detectarBanco(texto),
     };
+  }
+
+  private detectarBanco(texto: string): BancoDetectado | undefined {
+    const normalizado = normalizar(texto);
+    let mejor: BancoDetectado | undefined;
+    let mejorConteo = 0;
+    for (const banco of BANCOS) {
+      const conteo = banco.palabrasClave.reduce(
+        (total, palabra) =>
+          total + (normalizado.match(new RegExp(String.raw`\b${palabra}\b`, 'g'))?.length ?? 0),
+        0,
+      );
+      if (conteo > mejorConteo) {
+        mejor = banco;
+        mejorConteo = conteo;
+      }
+    }
+    return mejor;
+  }
+
+  /** Primera fecha "hasta" reconocida (`REGEXES_FECHA_HASTA`), como "YYYY-MM-DD". */
+  private detectarFechaHasta(texto: string): string | undefined {
+    for (const regex of REGEXES_FECHA_HASTA) {
+      const match = texto.match(regex);
+      if (!match) continue;
+      const dia = Number(match[1]);
+      const mes = Number(match[2]);
+      if (dia < 1 || dia > 31 || mes < 1 || mes > 12) continue;
+      const anio = match[3].length === 2 ? `20${match[3]}` : match[3];
+      return `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+    }
+    return undefined;
   }
 
   /**

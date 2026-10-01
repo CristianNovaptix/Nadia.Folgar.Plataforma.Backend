@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Types } from 'mongoose';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -43,5 +53,12 @@ export class ReglasClasificacionController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.reglasClasificacionService.update(id, dto, new Types.ObjectId(user.estudioId));
+  }
+
+  /** Borra una regla — lo usa "Deshacer" justo después de guardar una regla desde un extracto. */
+  @Delete(':id')
+  @Permissions(PERMISSIONS.EXTRACTOS_REGLAS_WRITE)
+  remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.reglasClasificacionService.remove(id, new Types.ObjectId(user.estudioId));
   }
 }

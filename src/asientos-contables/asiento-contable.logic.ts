@@ -28,6 +28,8 @@ export interface ReglaParaClasificar {
   ladoAsiento: LadoAsientoLogic;
   prioridad: number;
   activa: boolean;
+  /** 'manual' | 'aprendida' | 'ia' — a igual prioridad, una regla cargada por una persona le gana a una de la IA. */
+  procedencia?: string;
   /** Split porcentual — ver docstring de `ReglaClasificacion` en el schema del Backend. */
   cuentaContableSecundariaId?: string;
   porcentajeSecundario?: number;
@@ -59,6 +61,58 @@ export interface LineaAsiento {
   movimientos: MovimientoClasificado[];
 }
 
+/**
+ * Normaliza un texto para compararlo: minúsculas, sin tildes, y cualquier
+ * puntuación/espacios repetidos colapsados a un único espacio — así "Débito
+ * automático" o "Imp.afip:" matchean igual que "Debito automatico" / "Imp afip".
+ * Mirror de `normalizarTexto` en `extractos-ia/clasificacion.ts` del Frontend.
+ */
+export function normalizarTexto(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9%]+/g, ' ')
+    .trim();
+}
+
+/**
+ * ¿El concepto contiene el patrón? Comparación normalizada; un `*` en el
+ * patrón significa "cualquier texto en el medio" (para saltear fechas o
+ * números de operación que cambian cada mes). Un patrón hecho solo de signos
+ * no reconoce nada. Mirror de `patronCoincide` en `extractos-ia/clasificacion.ts` del Frontend.
+ */
+export function patronCoincide(patronTexto: string, concepto: string): boolean {
+  const partes = patronTexto.split('*').map(normalizarTexto).filter(Boolean);
+  if (partes.length === 0) return false;
+  const texto = normalizarTexto(concepto);
+  let desde = 0;
+  for (const parte of partes) {
+    const posicion = texto.indexOf(parte, desde);
+    if (posicion === -1) return false;
+    desde = posicion + parte.length;
+  }
+  return true;
+}
+
+/**
+ * Menor `prioridad` primero; a igual prioridad, una regla cargada por una
+ * persona (manual/aprendida) le gana a una de la IA; y después la más específica
+ * (patrón más largo, después la que filtra por monto o tipo) — así "Debito
+ * automatico Afip" le gana a "Debito automatico" sin depender del orden en
+ * que vinieron de la base. Mirror de `compararReglas` del Frontend.
+ */
+function compararReglas(a: ReglaParaClasificar, b: ReglaParaClasificar): number {
+  if (a.prioridad !== b.prioridad) return a.prioridad - b.prioridad;
+  const esIa = (r: ReglaParaClasificar) => (r.procedencia === 'ia' ? 1 : 0);
+  if (esIa(a) !== esIa(b)) return esIa(a) - esIa(b);
+  const especificidad = (r: ReglaParaClasificar) =>
+    normalizarTexto(r.patronTexto ?? '').length * 4 +
+    (r.condicionMonto ? 2 : 0) +
+    (r.tipoMovimiento ? 1 : 0);
+  return especificidad(b) - especificidad(a);
+}
+
 function reglaAplica(
   regla: ReglaParaClasificar,
   movimiento: MovimientoParaClasificar,
@@ -68,10 +122,7 @@ function reglaAplica(
     return false;
   }
 
-  if (
-    regla.patronTexto &&
-    !movimiento.concepto.toLowerCase().includes(regla.patronTexto.toLowerCase())
-  ) {
+  if (regla.patronTexto && !patronCoincide(regla.patronTexto, movimiento.concepto)) {
     return false;
   }
 
@@ -117,7 +168,7 @@ export function clasificarMovimientos(
   const reglasActivas = reglas
     .filter((r) => r.activa)
     .slice()
-    .sort((a, b) => a.prioridad - b.prioridad);
+    .sort(compararReglas);
 
   return movimientos.map((movimiento) => {
     /** La corrección manual del contador siempre pisa a la regla — es la vía para rectificar una fila mal clasificada, no solo para completar las que no matchearon ninguna. */
@@ -208,11 +259,14 @@ export function construirLineasAsiento(
     const plug = Math.round((saldoFinalDeclarado - saldoInicialDeclarado) * 100) / 100;
     if (Math.abs(plug) > 0) {
       const lado: LadoAsientoLogic = plug > 0 ? 'debe' : 'haber';
-      lineas.set(`${cuentaContableBancariaId}:${lado}`, {
+      const clave = `${cuentaContableBancariaId}:${lado}`;
+      // Si el contador reasignó movimientos a la propia cuenta del banco, el plug se suma a esa línea en vez de pisarla.
+      const existente = lineas.get(clave);
+      lineas.set(clave, {
         cuentaContableId: cuentaContableBancariaId,
         lado,
-        monto: Math.abs(plug),
-        movimientos: [],
+        monto: (existente?.monto ?? 0) + Math.abs(plug),
+        movimientos: existente?.movimientos ?? [],
       });
     }
   }

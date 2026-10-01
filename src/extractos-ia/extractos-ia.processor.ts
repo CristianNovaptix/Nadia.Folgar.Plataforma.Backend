@@ -29,6 +29,7 @@ import { LadoAsiento } from '../reglas-clasificacion/schemas/regla-clasificacion
 import { AiProviderResolverService } from '../configuracion/ai-provider-resolver.service';
 import { ProveedorIA } from '../common/enums/proveedor-ia.enum';
 import { conTimeout } from '../common/utils/con-timeout';
+import { normalizarTexto, patronCoincide } from '../asientos-contables/asiento-contable.logic';
 import {
   MovimientoValidable,
   construirMovimientosConValidacion,
@@ -37,6 +38,51 @@ import {
   determinarEstadoFinal,
   filtrarFilasNoTransaccionales,
 } from './validacion-saldo';
+
+/**
+ * Control determinístico de una regla sugerida por la IA ANTES de crearla
+ * (las reglas IA se aplican solas a los próximos extractos, así que una regla
+ * mal armada es un error silencioso que se repite todos los meses):
+ *  - tiene que matchear al menos un movimiento real de ESTE extracto (si no,
+ *    el patrón es inventado o está mal transcripto);
+ *  - todos los movimientos que matchea tienen que ser del mismo tipo — el
+ *    tipo de la regla y el lado del asiento salen de esos movimientos reales,
+ *    no de lo que dijo la IA (débito ⇒ contrapartida al Debe, crédito ⇒ al
+ *    Haber, siempre); si mezcla débitos y créditos se descarta;
+ *  - no puede pisarse con una regla activa que ya cubra el mismo texto y
+ *    tipo (evita duplicadas y, sobre todo, contradictorias).
+ * Devuelve `null` si la sugerencia no pasa el control.
+ */
+export function validarReglaSugerida(
+  sugerencia: ReglaClasificacionSugerida,
+  movimientos: Array<{ concepto: string; tipo?: string | null }>,
+  existentes: Array<{ patronTexto?: string; tipoMovimiento?: string | null }>,
+): { tipoMovimiento: 'debito' | 'credito'; ladoAsiento: LadoAsiento } | null {
+  const patron = normalizarTexto(sugerencia.patronTexto ?? '');
+  if (!patron) return null;
+
+  const tipos = new Set(
+    movimientos
+      .filter((m) => patronCoincide(sugerencia.patronTexto, m.concepto))
+      .map((m) => m.tipo),
+  );
+  if (tipos.size !== 1) return null;
+  const [tipo] = [...tipos];
+  if (tipo !== 'debito' && tipo !== 'credito') return null;
+
+  const yaCubierta = existentes.some(
+    (r) =>
+      r.patronTexto &&
+      normalizarTexto(r.patronTexto) === patron &&
+      (!r.tipoMovimiento || r.tipoMovimiento === tipo),
+  );
+  if (yaCubierta) return null;
+
+  return {
+    tipoMovimiento: tipo,
+    ladoAsiento: tipo === 'debito' ? LadoAsiento.DEBE : LadoAsiento.HABER,
+  };
+}
 
 export interface ProcesarExtractoJobData {
   extractoId: string;
@@ -311,7 +357,9 @@ export class ExtractosIaProcessor extends WorkerHost {
   private async obtenerCuentasContablesActivas(
     estudioId: Types.ObjectId,
   ): Promise<CuentaContableDocument[]> {
-    const cuentas = await this.planCuentasService.findAll({ limit: 100 }, estudioId);
+    // Llamada interna (sin el tope de 100 del DTO HTTP): la IA tiene que ver el plan COMPLETO,
+    // si no, nunca puede sugerir una regla hacia una cuenta que quedó fuera de la primera página.
+    const cuentas = await this.planCuentasService.findAll({ limit: 10000 }, estudioId);
     return cuentas.data.filter((c) => c.activo);
   }
 
@@ -323,7 +371,7 @@ export class ExtractosIaProcessor extends WorkerHost {
     cuentasContables: CuentaContableDocument[],
   ): Promise<ReglaExistenteResumen[]> {
     const reglas = await this.reglasClasificacionService.findAll(
-      { clienteId: clienteId.toString(), activa: true, limit: 100 },
+      { clienteId: clienteId.toString(), activa: true, limit: 10000 },
       estudioId,
     );
     const cuentaCodigoPorId = new Map(cuentasContables.map((c) => [c._id.toString(), c.codigo]));
@@ -334,6 +382,7 @@ export class ExtractosIaProcessor extends WorkerHost {
       )
       .map((r) => ({
         patronTexto: r.patronTexto,
+        tipoMovimiento: r.tipoMovimiento,
         cuentaCodigo: cuentaCodigoPorId.get(r.cuentaContableId.toString()) ?? '',
       }))
       .filter((r) => r.cuentaCodigo);
@@ -350,12 +399,30 @@ export class ExtractosIaProcessor extends WorkerHost {
     if (sugerencias.length === 0) return;
 
     const cuentaIdPorCodigo = new Map(cuentasContables.map((c) => [c.codigo, c._id.toString()]));
+    const existentes = (
+      await this.reglasClasificacionService.findAll(
+        { clienteId: extracto.clienteId.toString(), activa: true, limit: 10000 },
+        new Types.ObjectId(estudioId),
+      )
+    ).data.filter(
+      (r) =>
+        !r.cuentaBancariaId ||
+        r.cuentaBancariaId.toString() === extracto.cuentaBancariaId.toString(),
+    );
 
     for (const sugerencia of sugerencias) {
       const cuentaContableId = cuentaIdPorCodigo.get(sugerencia.cuentaCodigo);
       if (!cuentaContableId) {
         this.logger.warn(
           `Regla sugerida ignorada: código de cuenta "${sugerencia.cuentaCodigo}" no existe para el cliente ${extracto.clienteId.toString()}.`,
+        );
+        continue;
+      }
+
+      const validada = validarReglaSugerida(sugerencia, extracto.movimientos ?? [], existentes);
+      if (!validada) {
+        this.logger.warn(
+          `Regla sugerida ignorada ("${sugerencia.patronTexto}"): no corresponde a ningún movimiento del extracto, mezcla débitos y créditos, o ya hay una regla para ese texto.`,
         );
         continue;
       }
@@ -367,9 +434,9 @@ export class ExtractosIaProcessor extends WorkerHost {
             cuentaBancariaId: extracto.cuentaBancariaId.toString(),
             conceptoContable: sugerencia.patronTexto,
             cuentaContableId,
-            ladoAsiento: sugerencia.ladoAsiento as LadoAsiento,
+            ladoAsiento: validada.ladoAsiento,
             patronTexto: sugerencia.patronTexto,
-            tipoMovimiento: sugerencia.tipoMovimiento,
+            tipoMovimiento: validada.tipoMovimiento,
           },
           new Types.ObjectId(estudioId),
           new Types.ObjectId(userId),

@@ -423,6 +423,7 @@ describe('ExtractosIaService', () => {
         tieneCapaDeTexto: true,
         cuitDetectado: '30-71234567-8',
         periodoDetectado: '2026-08',
+        fechaHastaDetectada: '2026-08-31',
       });
     });
 

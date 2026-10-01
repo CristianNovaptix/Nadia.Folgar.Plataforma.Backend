@@ -70,6 +70,11 @@ export class ReglasClasificacionService {
     return { data, total, page, limit };
   }
 
+  async remove(id: string, estudioId: Types.ObjectId): Promise<void> {
+    const regla = await this.findOne(id, estudioId);
+    await regla.deleteOne();
+  }
+
   async findOne(id: string, estudioId: Types.ObjectId): Promise<ReglaClasificacionDocument> {
     const regla = await this.reglaModel.findOne({ _id: id, estudioId }).exec();
     if (!regla) {
