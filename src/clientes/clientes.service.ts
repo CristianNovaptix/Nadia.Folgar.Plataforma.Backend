@@ -205,7 +205,10 @@ export class ClientesService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
 
-    const filter: FilterQuery<ClienteDocument> = { estudioId };
+    const filter: FilterQuery<ClienteDocument> = {
+      estudioId,
+      enPapelera: query.enPapelera === 'true' ? true : { $ne: true },
+    };
 
     if (query.regimenFiscal) {
       filter.regimenFiscal = query.regimenFiscal;
@@ -357,6 +360,33 @@ export class ClientesService {
     const cliente = await this.findOneDocument(id, estudioId);
     cliente.activo = false;
     await cliente.save();
+  }
+
+  /** "Eliminar cliente" del Frontend: lo manda a la papelera (restaurable). */
+  async moverAPapelera(id: string, estudioId: Types.ObjectId): Promise<void> {
+    const cliente = await this.findOneDocument(id, estudioId);
+    cliente.enPapelera = true;
+    await cliente.save();
+  }
+
+  async restaurarDePapelera(id: string, estudioId: Types.ObjectId): Promise<void> {
+    const cliente = await this.findOneDocument(id, estudioId);
+    cliente.enPapelera = false;
+    await cliente.save();
+  }
+
+  /**
+   * Borrado real, solo desde la papelera. Los usuarios de portal del cliente
+   * se desactivan (no se borran) para que no quede un login apuntando a un
+   * cliente inexistente.
+   */
+  async eliminarDefinitivamente(id: string, estudioId: Types.ObjectId): Promise<void> {
+    const cliente = await this.findOneDocument(id, estudioId);
+    if (!cliente.enPapelera) {
+      throw new BadRequestException('Primero hay que mover el cliente a la papelera');
+    }
+    await this.userModel.updateMany({ clienteId: cliente._id }, { activo: false }).exec();
+    await this.clienteModel.deleteOne({ _id: cliente._id }).exec();
   }
 
   /**

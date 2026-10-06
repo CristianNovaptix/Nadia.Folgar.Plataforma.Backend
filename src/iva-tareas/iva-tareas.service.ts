@@ -2,7 +2,11 @@ import { BadRequestException, Inject, Injectable, Logger, NotFoundException } fr
 import { Cron } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
-import { Cliente, ClienteDocument, RegimenFiscal } from '../clientes/schemas/cliente.schema';
+import { Cliente, ClienteDocument } from '../clientes/schemas/cliente.schema';
+import {
+  RegimenFiscalConfig,
+  RegimenFiscalConfigDocument,
+} from '../regimenes-fiscales/schemas/regimen-fiscal-config.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
 import {
@@ -85,6 +89,8 @@ export class IvaTareasService {
     private readonly adjuntoModel: Model<TareaAdjuntoDocument>,
     @InjectModel(Cliente.name) private readonly clienteModel: Model<ClienteDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(RegimenFiscalConfig.name)
+    private readonly regimenConfigModel: Model<RegimenFiscalConfigDocument>,
     private readonly documentoTextoExtractorService: DocumentoTextoExtractorService,
     @Inject(AI_TAREAS_DOCUMENTO_PORT)
     private readonly aiTareasDocumentoPort: AiTareasDocumentoPort,
@@ -128,67 +134,48 @@ export class IvaTareasService {
   // ── Generación mensual automática ────────────────────────────────────
 
   /**
-   * Determina qué jurisdicciones le corresponden a un cliente según su
-   * `regimenFiscal`.
+   * Genera, para `periodo` (default: mes en curso), una tarjeta por cada cliente activo ×
+   * obligación cargada para su régimen fiscal en Seguridad → "Régimen fiscal"
+   * (`RegimenFiscalConfig`). Un cliente sin régimen cargado, o con un régimen sin
+   * obligaciones, no genera nada. El título de la tarjeta dice qué presentación hay que hacer.
+   * No duplica: si ya existe una tarjeta con el mismo cliente+título+período, la omite.
    *
-   * CRITERIO (simplificación documentada — el cálculo real de jurisdicción
-   * depende de padrones de IIBB, actividad y domicilio fiscal, y no es el
-   * foco de este módulo, ver FOLGAR-046 para el modelo fino):
-   *   - TODOS los clientes activos generan tarea de ARCA (IVA nacional).
-   *   - Solo `responsable_inscripto` generan además ARBA (IIBB/Convenio
-   *     Multilateral) y AGIP (CABA). `monotributo` y `exento` no facturan
-   *     IIBB de la misma forma (monotributo tributa por categoría, no por
-   *     DDJJ mensual; exento no tiene obligación de IIBB), así que quedan
-   *     fuera de esas dos jurisdicciones bajo esta regla simple.
-   */
-  private determinarJurisdicciones(regimenFiscal?: RegimenFiscal): Jurisdiccion[] {
-    if (regimenFiscal === RegimenFiscal.RESPONSABLE_INSCRIPTO) {
-      return [Jurisdiccion.ARCA, Jurisdiccion.ARBA, Jurisdiccion.AGIP];
-    }
-    return [Jurisdiccion.ARCA];
-  }
-
-  /**
-   * Genera la tarea de presentación de cada cliente activo × jurisdicción
-   * aplicable para `periodo` (default: mes en curso), sin duplicar si ya
-   * existe una tarea para esa combinación cliente+jurisdicción+período
-   * (checklist FOLGAR-047).
-   *
-   * Si se pasa `estudioId` (ej. desde el disparo manual del controller),
-   * se limita a los clientes de ese estudio; sin `estudioId` (cron) corre
-   * sobre todos los clientes activos de todos los estudios — mismo patrón
-   * multi-tenant que `NotificacionesService.evaluarReglas()`.
+   * Si se pasa `estudioId` (disparo manual desde el controller) se limita a ese estudio; sin
+   * `estudioId` (cron) corre sobre todos los estudios.
    */
   async generarTareasDelMes(
     periodo: string = periodoActual(),
     estudioId?: Types.ObjectId,
   ): Promise<GenerarTareasResultado> {
-    const filtroClientes: FilterQuery<ClienteDocument> = { activo: true };
+    const filtroClientes: FilterQuery<ClienteDocument> = { activo: true, regimenFiscal: { $exists: true, $ne: null } };
     if (estudioId) {
       filtroClientes.estudioId = estudioId;
     }
 
-    const clientes = await this.clienteModel.find(filtroClientes).exec();
+    const [clientes, configs] = await Promise.all([
+      this.clienteModel.find(filtroClientes).exec(),
+      this.regimenConfigModel.find(estudioId ? { estudioId } : {}).exec(),
+    ]);
 
     const resultado: GenerarTareasResultado = { evaluados: 0, creadas: 0, omitidas: 0 };
     // Próxima posición libre en la columna "pendiente" por estudio, para no
     // pisar posiciones entre altas del mismo run (se inicializa lazy con el
     // conteo real en Mongo la primera vez que aparece cada estudio).
     const siguientePosicionPendiente = new Map<string, number>();
+    const [anio, mes] = periodo.split('-');
 
     for (const cliente of clientes) {
-      const jurisdicciones = this.determinarJurisdicciones(cliente.regimenFiscal);
+      const obligaciones =
+        configs.find(
+          (c) => c.regimen === cliente.regimenFiscal && String(c.estudioId) === String(cliente.estudioId),
+        )?.obligaciones ?? [];
 
-      for (const jurisdiccion of jurisdicciones) {
+      for (const obligacion of obligaciones) {
         resultado.evaluados += 1;
+        const titulo = `Presentación: ${obligacion.nombre} — período ${mes}/${anio}`;
 
         const yaExiste = await this.tareaModel
-          .exists({
-            estudioId: cliente.estudioId,
-            clienteId: cliente._id,
-            jurisdiccion,
-            periodo,
-          })
+          .exists({ estudioId: cliente.estudioId, clienteId: cliente._id, titulo, periodo })
           .exec();
 
         if (yaExiste) {
@@ -208,7 +195,8 @@ export class IvaTareasService {
 
         await this.tareaModel.create({
           clienteId: cliente._id,
-          jurisdiccion,
+          titulo,
+          ...(obligacion.jurisdiccion ? { jurisdiccion: obligacion.jurisdiccion } : {}),
           periodo,
           estado: EstadoTarea.PENDIENTE,
           posicion,
@@ -327,7 +315,11 @@ export class IvaTareasService {
   ): Promise<TareaConAdjuntos[]> {
     const periodo = filtros.periodo ?? periodoActual();
 
-    const filter: FilterQuery<TareaPresentacionDocument> = { estudioId, periodo };
+    const filter: FilterQuery<TareaPresentacionDocument> = {
+      estudioId,
+      periodo,
+      enPapelera: { $ne: true },
+    };
     if (filtros.jurisdiccion) {
       filter.jurisdiccion = filtros.jurisdiccion;
     }
@@ -348,6 +340,18 @@ export class IvaTareasService {
     return this.enriquecerConAdjuntos(tareas);
   }
 
+  /** Tarjetas en la papelera del tablero, de cualquier período — compartida por todo el estudio. */
+  async findPapelera(estudioId: Types.ObjectId): Promise<TareaConAdjuntos[]> {
+    const tareas = await this.tareaModel
+      .find({ estudioId, enPapelera: true })
+      .sort({ updatedAt: -1 })
+      .populate('clienteId', 'nombre cuit regimenFiscal')
+      .populate('asignados', 'nombre email')
+      .populate('creadoPor', 'nombre')
+      .exec();
+    return this.enriquecerConAdjuntos(tareas);
+  }
+
   /**
    * Tarjetas no presentadas, de cualquier período, ya vencidas o que vencen
    * dentro de `horas` — base de la campanita del Inicio (ver `AlertasTareasService`).
@@ -361,6 +365,7 @@ export class IvaTareasService {
     return this.tareaModel
       .find({
         estudioId,
+        enPapelera: { $ne: true },
         estado: { $ne: EstadoTarea.PRESENTADO },
         fechaHasta: { $ne: null, $lte: limite },
       })
@@ -494,7 +499,10 @@ export class IvaTareasService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
 
-    const filter: FilterQuery<TareaPresentacionDocument> = { estudioId };
+    const filter: FilterQuery<TareaPresentacionDocument> = {
+      estudioId,
+      enPapelera: { $ne: true },
+    };
 
     if (query.jurisdiccion) {
       filter.jurisdiccion = query.jurisdiccion;
@@ -629,6 +637,9 @@ export class IvaTareasService {
     // lápiz de `KanbanCard` las edita a través de acá.
     if (dto.titulo !== undefined) {
       tarea.titulo = dto.titulo || undefined;
+    }
+    if (dto.enPapelera !== undefined) {
+      tarea.enPapelera = dto.enPapelera;
     }
 
     await tarea.save();

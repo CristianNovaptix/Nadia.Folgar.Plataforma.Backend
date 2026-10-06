@@ -65,6 +65,24 @@ export class ClientesController {
     return this.clientesService.deactivate(id, new Types.ObjectId(user.estudioId));
   }
 
+  @Post(':id/papelera')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  moverAPapelera(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.clientesService.moverAPapelera(id, new Types.ObjectId(user.estudioId));
+  }
+
+  @Post(':id/restaurar')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  restaurarDePapelera(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.clientesService.restaurarDePapelera(id, new Types.ObjectId(user.estudioId));
+  }
+
+  @Delete(':id/definitivo')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  eliminarDefinitivamente(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.clientesService.eliminarDefinitivamente(id, new Types.ObjectId(user.estudioId));
+  }
+
   /** "Crear usuario y enviarle las credenciales por email" del alta de Cliente — ver `ClientesService.crearUsuarioPortal`. */
   @Post(':id/usuario-portal')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)

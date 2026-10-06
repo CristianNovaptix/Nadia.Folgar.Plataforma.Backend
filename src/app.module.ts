@@ -25,6 +25,8 @@ import { PortalClientesModule } from './portal-clientes/portal-clientes.module';
 import { AlertaPresentacionesModule } from './alerta-presentaciones/alerta-presentaciones.module';
 import { IvaTareasModule } from './iva-tareas/iva-tareas.module';
 import { FacturacionElectronicaModule } from './facturacion-electronica/facturacion-electronica.module';
+import { InicioModule } from './inicio/inicio.module';
+import { RegimenesFiscalesModule } from './regimenes-fiscales/regimenes-fiscales.module';
 import { AsistenteIaModule } from './asistente-ia/asistente-ia.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { HealthModule } from './health/health.module';
@@ -117,6 +119,8 @@ const queueImports = useRedisQueues()
     AlertaPresentacionesModule,
     IvaTareasModule,
     FacturacionElectronicaModule,
+    InicioModule,
+    RegimenesFiscalesModule,
     AsistenteIaModule,
     ConfiguracionModule,
     HealthModule,

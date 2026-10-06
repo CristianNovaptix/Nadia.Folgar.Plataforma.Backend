@@ -11,6 +11,7 @@ import {
 } from '../ports/arca-portal.port';
 import {
   comoLista,
+  filasCcmaComoDeudas,
   mapearComprobante,
   mapearDeudas,
   mapearPresentaciones,
@@ -171,7 +172,14 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
     const acceso = portal.getByText('Estado de cuenta', { exact: true }).first();
     await acceso.waitFor();
     const [p] = await Promise.all([context.waitForEvent('page', { timeout: 30_000 }), acceso.click()]);
-    await p.waitForURL(/ctacte\.cloud\.afip\.gob\.ar/);
+    // A monotributistas y autónomos ARCA los manda a la cuenta corriente vieja (CCMA)
+    // en vez de a Cuentas Tributarias.
+    await p.waitForURL(/ctacte\.cloud\.afip\.gob\.ar|\/ccam\//, { waitUntil: 'commit' });
+    if (p.url().includes('/ccam/')) {
+      const deudas = await this.leerCcma(p);
+      await p.close();
+      return { [cuits[0]]: { deudas, faltas: [], vencimientos: [] } };
+    }
     await p.waitForLoadState('load');
 
     const resultado: Record<string, { deudas: Record<string, unknown>[]; faltas: Record<string, unknown>[]; vencimientos: Record<string, unknown>[] }> = {};
@@ -208,6 +216,31 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
     }
     await p.close();
     return resultado;
+  }
+
+  /**
+   * CCMA (cuenta corriente de autónomos/monotributistas): "Cálculo de deuda" desde
+   * 01/2016 y se leen las filas de la tabla, que ARCA muestra de a 12 períodos.
+   */
+  private async leerCcma(p: Page): Promise<Record<string, unknown>[]> {
+    await p.waitForLoadState('domcontentloaded');
+    await p.locator('input[name="perdesde2"]').fill('01/2016');
+    await Promise.all([p.waitForURL(/P04_ctacte/, { waitUntil: 'domcontentloaded' }), p.click('input[name="CalDeud"]')]);
+    const filas: string[][] = [];
+    for (let pagina = 0; pagina < 20; pagina += 1) {
+      await p.locator('#contenedor').waitFor({ state: 'attached' });
+      filas.push(
+        ...(await p.$$eval('#contenedor tr', (trs) =>
+          trs.map((tr) => Array.from(tr.children).map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim())),
+        )),
+      );
+      const ultimo = p.locator('#ultimoPeriodo');
+      if (!(await p.locator('#mas0').isVisible()) || !(await ultimo.count())) break;
+      const antes = await ultimo.inputValue();
+      await p.click('#mas0');
+      await p.waitForFunction((a) => (document.getElementById('ultimoPeriodo') as HTMLInputElement | null)?.value !== a, antes);
+    }
+    return filasCcmaComoDeudas(filas);
   }
 
   private async leerComprobantes(

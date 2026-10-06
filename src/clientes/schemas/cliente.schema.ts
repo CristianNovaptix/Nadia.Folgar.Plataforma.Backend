@@ -98,6 +98,10 @@ export class Cliente {
   @Prop({ default: true })
   activo: boolean;
 
+  /** Papelera de "Clientes" (Frontend): oculto del listado, restaurable hasta eliminarlo definitivamente. */
+  @Prop({ default: false, index: true })
+  enPapelera: boolean;
+
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Estudio', required: true, index: true })
   estudioId: Types.ObjectId;
 

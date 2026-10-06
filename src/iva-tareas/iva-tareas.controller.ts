@@ -41,6 +41,13 @@ export class IvaTareasController {
     return this.ivaTareasService.findKanban(new Types.ObjectId(user.estudioId), query);
   }
 
+  /** Declarada antes de `:id`, mismo criterio que 'kanban'/'miembros'. */
+  @Get('papelera')
+  @Permissions(PERMISSIONS.IVA_TAREAS_READ)
+  findPapelera(@CurrentUser() user: AuthenticatedUser) {
+    return this.ivaTareasService.findPapelera(new Types.ObjectId(user.estudioId));
+  }
+
   @Get()
   @Permissions(PERMISSIONS.IVA_TAREAS_READ)
   findAll(@Query() query: QueryTareaPresentacionDto, @CurrentUser() user: AuthenticatedUser) {

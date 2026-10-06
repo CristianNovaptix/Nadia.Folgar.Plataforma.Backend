@@ -3,6 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cliente, ClienteSchema } from '../clientes/schemas/cliente.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import {
+  RegimenFiscalConfig,
+  RegimenFiscalConfigSchema,
+} from '../regimenes-fiscales/schemas/regimen-fiscal-config.schema';
 import { TareaPresentacion, TareaPresentacionSchema } from './schemas/tarea-presentacion.schema';
 import { TareaAdjunto, TareaAdjuntoSchema } from './schemas/tarea-adjunto.schema';
 import { IvaTareasService } from './iva-tareas.service';
@@ -36,6 +40,7 @@ import { OpenAiTareasDocumentoAdapter } from './adapters/openai-tareas-documento
       { name: TareaAdjunto.name, schema: TareaAdjuntoSchema },
       { name: Cliente.name, schema: ClienteSchema },
       { name: User.name, schema: UserSchema },
+      { name: RegimenFiscalConfig.name, schema: RegimenFiscalConfigSchema },
       { name: AlertaTareaEstado.name, schema: AlertaTareaEstadoSchema },
     ]),
   ],

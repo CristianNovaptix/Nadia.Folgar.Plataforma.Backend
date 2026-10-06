@@ -319,6 +319,59 @@ export function mapearDeudas(deudas: Record<string, unknown>[], hoy = new Date()
     .sort((a, b) => (a.fechaVencimiento ?? '').localeCompare(b.fechaVencimiento ?? ''));
 }
 
+const IMPUESTO_CCMA: Record<string, string> = {
+  AUT: 'Autónomos',
+  '020': 'Monotributo impositivo',
+  '021': 'Monotributo SIPA',
+  '024': 'Monotributo obra social',
+};
+
+/**
+ * Tabla de "Cálculo de deuda" de la cuenta corriente de autónomos/monotributistas
+ * (CCMA), columnas: [+, Detalle, Período, Impuesto, Concepto, Subcpto, Descripción,
+ * Fecha movimiento, Debe, Haber, Saldo]. Cada grupo de movimientos cierra con una
+ * fila "Saldo" (negativo entre paréntesis = deuda). Devuelve los grupos con deuda
+ * con la misma forma que `getDeudas` de Cuentas Tributarias, para `mapearDeudas`.
+ */
+export function filasCcmaComoDeudas(filas: string[][]): Record<string, unknown>[] {
+  const importe = (t: string) => {
+    const n = Number(t.replace(/[(),\s]/g, ''));
+    return Number.isNaN(n) ? 0 : t.trim().startsWith('(') ? -n : n;
+  };
+  const deudas: Record<string, unknown>[] = [];
+  let grupo: string[][] = [];
+  for (const fila of filas) {
+    if (fila.length !== 11 || !/^\d{2}\/\d{4}$/.test(fila[2])) continue;
+    if (fila[6] !== 'Saldo') {
+      grupo.push(fila);
+      continue;
+    }
+    const total = -importe(fila[10]);
+    const movimientos = grupo;
+    grupo = [];
+    if (total <= 0 || !movimientos.length) continue;
+    const obligacion = movimientos.find((m) => m[8] && /^obligacion/i.test(m[6])) ?? movimientos[0];
+    const interesesNetos = movimientos
+      .filter((m) => /intereses/i.test(m[6]))
+      .reduce((t, m) => t + importe(m[8]) - importe(m[9]), 0);
+    const intereses = Math.min(total, Math.max(0, interesesNetos));
+    const [mes, anio] = obligacion[2].split('/');
+    const [d, m, y] = obligacion[7].split('/');
+    deudas.push({
+      impuestoView: `${obligacion[3]}${IMPUESTO_CCMA[obligacion[3]] ? ` - ${IMPUESTO_CCMA[obligacion[3]]}` : ''}`,
+      conceptoView: `${obligacion[4]} - ${obligacion[6].replace(/\.$/, '')}`,
+      subconceptoView: obligacion[5],
+      periodoFiscal: `${anio}${mes}`,
+      anticipocuota: 0,
+      fechaVencimiento: y ? `${y}-${m}-${d}` : undefined,
+      importe: Math.round((total - intereses) * 100) / 100,
+      importeInteresesResarcitorios: Math.round(intereses * 100) / 100,
+      importeInteresesPunitorios: 0,
+    });
+  }
+  return deudas;
+}
+
 /**
  * `getVencimientos(cuit)` de Cuentas Tributarias — se usa para los representados,
  * porque la agenda del portal solo responde para el CUIT con el que se entró.

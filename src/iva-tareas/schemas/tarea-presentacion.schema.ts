@@ -158,6 +158,14 @@ export class TareaPresentacion {
   portadaAdjuntoId?: Types.ObjectId;
 
   /**
+   * Papelera del tablero: la tarjeta no se borra, se oculta del Kanban, del
+   * Inicio y de la campanita hasta que se restaure o se elimine definitivamente.
+   * Compartida por todo el estudio (antes vivía en el localStorage de cada navegador).
+   */
+  @Prop({ default: false, index: true })
+  enPapelera: boolean;
+
+  /**
    * Título propio de la tarjeta — solo lo traen las tareas importadas desde
    * documento (ej. "Analizar el concepto de ética y moral"). El resto de las
    * tareas (generadas por `generarTareasDelMes` o alta manual) no lo tiene:

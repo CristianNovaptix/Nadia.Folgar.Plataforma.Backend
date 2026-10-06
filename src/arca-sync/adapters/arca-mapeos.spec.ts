@@ -1,4 +1,5 @@
 import {
+  filasCcmaComoDeudas,
   mapearComprobante,
   mapearDeudas,
   mapearVencimientosCtacte,
@@ -173,5 +174,40 @@ describe('arca-mapeos — DDJJ faltantes', () => {
       fechaVencimiento: '2025-07-28T03:00:00.000Z',
       estado: 'pendiente',
     });
+  });
+});
+
+describe('arca-mapeos — cuenta corriente de autónomos/monotributistas (CCMA)', () => {
+  const fila = (periodo: string, desc: string, fecha: string, debe = '', haber = '') =>
+    ['+', '', periodo, 'AUT', '019', '019', desc, fecha, debe, haber, ''];
+  const saldo = (periodo: string, valor: string) => ['-', '', periodo, '', '', '', 'Saldo', '06/10/2026', '', '', valor];
+
+  it('deudas: solo los períodos con saldo deudor, separando capital e intereses', () => {
+    const deudas = mapearDeudas(
+      filasCcmaComoDeudas([
+        ['', 'Detalle', 'Período', 'Impuesto', 'Concepto', 'Subcpto', 'Descripción', 'Fecha Movimiento', 'Debe', 'Haber', 'Saldo'],
+        fila('10/2026', 'Obligacion Mensual Autonomo.', '10/11/2026', '76,993.48'),
+        saldo('10/2026', '(76,993.48)'),
+        fila('03/2026', 'Obligacion Mensual Autonomo.', '08/04/2026', '66,389.76'),
+        fila('03/2026', 'Pago Obligacion Mensual Autonomo.', '07/04/2026', '', '66,389.76'),
+        saldo('03/2026', '0.00'),
+        fila('02/2026', 'Obligacion Mensual Autonomo.', '09/03/2026', '66,389.76'),
+        fila('02/2026', 'Crédito Reimput Obligacion Mensual Autonomo.', '07/04/2026', '', '66,389.76'),
+        fila('02/2026', 'Intereses Resarcitorios Autonomo', '07/04/2026', '532.66'),
+        saldo('02/2026', '(532.66)'),
+      ]),
+      hoy,
+    );
+    expect(deudas).toHaveLength(2);
+    expect(deudas[0]).toMatchObject({
+      impuesto: 'AUT - Autónomos',
+      concepto: '019 - Obligacion Mensual Autonomo',
+      periodo: '2026-02',
+      saldo: 0,
+      interesesResarcitorios: 532.66,
+      fechaVencimiento: '2026-03-09T03:00:00.000Z',
+      vencida: true,
+    });
+    expect(deudas[1]).toMatchObject({ periodo: '2026-10', saldo: 76993.48, interesesResarcitorios: 0, vencida: false });
   });
 });

@@ -7,6 +7,7 @@ import { EstadoTarea, Jurisdiccion, TareaPresentacion } from './schemas/tarea-pr
 import { TareaAdjunto } from './schemas/tarea-adjunto.schema';
 import { Cliente, RegimenFiscal } from '../clientes/schemas/cliente.schema';
 import { User } from '../users/schemas/user.schema';
+import { RegimenFiscalConfig } from '../regimenes-fiscales/schemas/regimen-fiscal-config.schema';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { DocumentoTextoExtractorService } from './documento-texto-extractor.service';
 import { AI_TAREAS_DOCUMENTO_PORT } from './ports/ai-tareas-documento.port';
@@ -212,6 +213,10 @@ function createFakeAdjuntoModel() {
   return { model, docs };
 }
 
+const regimenConfigModelMock = {
+  find: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
+};
+
 describe('IvaTareasService', () => {
   describe('generarTareasDelMes — evita duplicados', () => {
     let service: IvaTareasService;
@@ -242,6 +247,20 @@ describe('IvaTareasService', () => {
       clienteModelMock.find.mockReturnValue({
         exec: jest.fn().mockResolvedValue([clienteResponsableInscripto, clienteMonotributo]),
       });
+      regimenConfigModelMock.find.mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            regimen: RegimenFiscal.RESPONSABLE_INSCRIPTO,
+            estudioId,
+            obligaciones: [
+              { nombre: 'Declaración jurada de IVA', jurisdiccion: Jurisdiccion.ARCA },
+              { nombre: 'Liquidación mensual de Ingresos Brutos', jurisdiccion: Jurisdiccion.ARBA },
+              { nombre: 'Libro IVA digital' },
+            ],
+          },
+          { regimen: RegimenFiscal.MONOTRIBUTO, estudioId, obligaciones: [{ nombre: 'Recategorización' }] },
+        ]),
+      });
 
       const fake = createFakeTareaModel();
       docs = fake.docs;
@@ -254,6 +273,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -262,25 +282,30 @@ describe('IvaTareasService', () => {
       service = moduleRef.get(IvaTareasService);
     });
 
-    it('genera ARCA para todos los clientes y ARBA+AGIP solo para responsable_inscripto', async () => {
+    it('genera una tarjeta por obligación del régimen de cada cliente, con título de presentación', async () => {
       const resultado = await service.generarTareasDelMes('2026-08', estudioId);
 
-      // responsable_inscripto: ARCA+ARBA+AGIP (3) + monotributo: ARCA (1) = 4
+      // responsable_inscripto: 3 obligaciones cargadas + monotributo: 1 = 4
       expect(resultado).toEqual({ evaluados: 4, creadas: 4, omitidas: 0 });
-      expect(docs).toHaveLength(4);
-
-      const jurisdiccionesDelResponsable = docs
+      const delResponsable = docs
         .filter((d) => String(d.clienteId) === String(clienteResponsableInscripto._id))
-        .map((d) => d.jurisdiccion as Jurisdiccion)
-        .sort();
-      expect(jurisdiccionesDelResponsable).toEqual(
-        [Jurisdiccion.ARCA, Jurisdiccion.ARBA, Jurisdiccion.AGIP].sort(),
-      );
+        .map((d) => d.titulo);
+      expect(delResponsable).toEqual([
+        'Presentación: Declaración jurada de IVA — período 08/2026',
+        'Presentación: Liquidación mensual de Ingresos Brutos — período 08/2026',
+        'Presentación: Libro IVA digital — período 08/2026',
+      ]);
+      const delMonotributo = docs.filter((d) => String(d.clienteId) === String(clienteMonotributo._id));
+      expect(delMonotributo.map((d) => d.titulo)).toEqual(['Presentación: Recategorización — período 08/2026']);
+      // Sin organismo cargado no se inventa ninguna jurisdicción.
+      expect(delMonotributo[0].jurisdiccion).toBeUndefined();
+    });
 
-      const jurisdiccionesDelMonotributo = docs
-        .filter((d) => String(d.clienteId) === String(clienteMonotributo._id))
-        .map((d) => d.jurisdiccion as Jurisdiccion);
-      expect(jurisdiccionesDelMonotributo).toEqual([Jurisdiccion.ARCA]);
+    it('un régimen sin obligaciones cargadas no genera tarjetas', async () => {
+      regimenConfigModelMock.find.mockReturnValue({ exec: jest.fn().mockResolvedValue([]) });
+      const resultado = await service.generarTareasDelMes('2026-08', estudioId);
+      expect(resultado).toEqual({ evaluados: 0, creadas: 0, omitidas: 0 });
+      expect(docs).toHaveLength(0);
     });
 
     it('no duplica tareas si se llama dos veces para el mismo período (checklist FOLGAR-047)', async () => {
@@ -353,6 +378,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -447,6 +473,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -531,6 +558,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: {} },
           { provide: getModelToken(Cliente.name), useValue: {} },
           { provide: getModelToken(User.name), useValue: userModel },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -581,6 +609,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -658,6 +687,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
           { provide: getModelToken(Cliente.name), useValue: { exists: jest.fn() } },
           { provide: getModelToken(User.name), useValue: userModelMock },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -726,6 +756,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           DocumentoTextoExtractorService,
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
@@ -888,6 +919,7 @@ describe('IvaTareasService', () => {
           { provide: getModelToken(TareaAdjunto.name), useValue: {} },
           { provide: getModelToken(Cliente.name), useValue: {} },
           { provide: getModelToken(User.name), useValue: {} },
+          { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
           { provide: DocumentoTextoExtractorService, useValue: documentoTextoExtractorServiceMock },
           { provide: AI_TAREAS_DOCUMENTO_PORT, useValue: aiTareasDocumentoPortMock },
         ],
