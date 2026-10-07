@@ -328,6 +328,34 @@ describe('IvaTareasService', () => {
       expect(resultadoSetiembre.creadas).toBe(4);
       expect(docs).toHaveLength(8);
     });
+
+    it('respeta el día de inicio y carga las fechas de inicio y vencimiento configuradas', async () => {
+      regimenConfigModelMock.find.mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            regimen: RegimenFiscal.RESPONSABLE_INSCRIPTO,
+            estudioId,
+            obligaciones: [
+              { nombre: 'IVA', diaInicio: 10, diaVencimiento: 20 },
+              { nombre: 'Cruza de mes', diaInicio: 25, diaVencimiento: 5 },
+            ],
+          },
+        ]),
+      });
+
+      // Día 5: todavía no llegó ninguna de las dos.
+      expect((await service.generarTareasDelMes('2026-12', estudioId, 5)).creadas).toBe(0);
+
+      // Día 12: solo la que arranca el 10.
+      expect((await service.generarTareasDelMes('2026-12', estudioId, 12)).creadas).toBe(1);
+      expect(docs[0].fechaDesde).toEqual(new Date(Date.UTC(2026, 11, 10)));
+      expect(docs[0].fechaHasta).toEqual(new Date(Date.UTC(2026, 11, 20)));
+
+      // Día 25: la otra, que vence el 5 del mes siguiente.
+      expect((await service.generarTareasDelMes('2026-12', estudioId, 25)).creadas).toBe(1);
+      expect(docs[1].fechaDesde).toEqual(new Date(Date.UTC(2026, 11, 25)));
+      expect(docs[1].fechaHasta).toEqual(new Date(Date.UTC(2027, 0, 5)));
+    });
   });
 
   describe('moverTarea', () => {

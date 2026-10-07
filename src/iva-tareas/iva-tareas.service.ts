@@ -55,6 +55,18 @@ export function periodoActual(fecha: Date = new Date()): string {
   return `${fecha.getFullYear()}-${mes}`;
 }
 
+/** Fecha (medianoche UTC, mismo formato que guarda el Frontend) del día `dia` del período "YYYY-MM", acotada al último día del mes. */
+export function fechaDelPeriodo(periodo: string, dia: number): Date {
+  const [anio, mes] = periodo.split('-').map(Number);
+  const ultimoDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  return new Date(Date.UTC(anio, mes - 1, Math.min(dia, ultimoDia)));
+}
+
+function periodoSiguiente(periodo: string): string {
+  const [anio, mes] = periodo.split('-').map(Number);
+  return mes === 12 ? `${anio + 1}-01` : `${anio}-${String(mes + 1).padStart(2, '0')}`;
+}
+
 /** Un adjunto es "imagen" si su `contentType` viene con el prefijo MIME estándar `image/*`. */
 function esImagen(contentType: string): boolean {
   return contentType.startsWith('image/');
@@ -146,6 +158,8 @@ export class IvaTareasService {
   async generarTareasDelMes(
     periodo: string = periodoActual(),
     estudioId?: Types.ObjectId,
+    /** Solo el cron lo pasa: omite las obligaciones cuyo `diaInicio` todavía no llegó. */
+    diaDelMes?: number,
   ): Promise<GenerarTareasResultado> {
     const filtroClientes: FilterQuery<ClienteDocument> = { activo: true, regimenFiscal: { $exists: true, $ne: null } };
     if (estudioId) {
@@ -171,6 +185,10 @@ export class IvaTareasService {
         )?.obligaciones ?? [];
 
       for (const obligacion of obligaciones) {
+        const diaInicio = obligacion.diaInicio ?? 1;
+        if (diaDelMes !== undefined && diaDelMes < diaInicio) {
+          continue;
+        }
         resultado.evaluados += 1;
         const titulo = `Presentación: ${obligacion.nombre} — período ${mes}/${anio}`;
 
@@ -198,6 +216,15 @@ export class IvaTareasService {
           titulo,
           ...(obligacion.jurisdiccion ? { jurisdiccion: obligacion.jurisdiccion } : {}),
           periodo,
+          fechaDesde: fechaDelPeriodo(periodo, diaInicio),
+          ...(obligacion.diaVencimiento
+            ? {
+                fechaHasta: fechaDelPeriodo(
+                  obligacion.diaVencimiento < diaInicio ? periodoSiguiente(periodo) : periodo,
+                  obligacion.diaVencimiento,
+                ),
+              }
+            : {}),
           estado: EstadoTarea.PENDIENTE,
           posicion,
           checklist: [],
@@ -211,13 +238,13 @@ export class IvaTareasService {
   }
 
   /**
-   * `CronExpression` no trae una constante para "1er día del mes a la 1am"
-   * (solo medianoche/mediodía), así que se usa la expresión cron directa:
-   * minuto 0, hora 1, día-de-mes 1, cualquier mes, cualquier día de semana.
+   * Corre todos los días a la 1am: cada obligación se crea el día de inicio que tiene configurado
+   * en "Régimen fiscal" (o después, si ese día no corrió) — la deduplicación evita repetirlas.
    */
-  @Cron('0 1 1 * *')
+  @Cron('0 1 * * *')
   async generarTareasDelMesCron(): Promise<void> {
-    const resultado = await this.generarTareasDelMes();
+    const hoy = new Date();
+    const resultado = await this.generarTareasDelMes(periodoActual(hoy), undefined, hoy.getDate());
     this.logger.log(
       `generarTareasDelMes: evaluados=${resultado.evaluados} creadas=${resultado.creadas} ` +
         `omitidas=${resultado.omitidas}`,

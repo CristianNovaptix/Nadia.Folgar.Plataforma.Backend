@@ -15,6 +15,17 @@ export class ObligacionRegimen {
   /** Organismo ante el que se presenta — opcional, solo da color/etiqueta a la tarjeta. */
   @Prop({ type: String, enum: Jurisdiccion, required: false })
   jurisdiccion?: Jurisdiccion;
+
+  /** Día del mes en que se crea sola la tarjeta (y su fecha de inicio). Sin cargar = día 1. */
+  @Prop({ type: Number, min: 1, max: 31, required: false })
+  diaInicio?: number;
+
+  /**
+   * Día del mes en que vence (fecha límite de la tarjeta). Si es menor que `diaInicio`, vence
+   * ese día del mes siguiente. Sin cargar = la tarjeta queda sin vencimiento.
+   */
+  @Prop({ type: Number, min: 1, max: 31, required: false })
+  diaVencimiento?: number;
 }
 
 export const ObligacionRegimenSchema = SchemaFactory.createForClass(ObligacionRegimen);

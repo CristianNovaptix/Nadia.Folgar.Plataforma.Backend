@@ -25,7 +25,12 @@ export class RegimenesFiscalesService {
     if (!Object.values(RegimenFiscal).includes(regimen as RegimenFiscal)) {
       throw new BadRequestException('Régimen fiscal inexistente');
     }
-    const obligaciones = dto.obligaciones.map((o) => ({ nombre: o.nombre.trim(), jurisdiccion: o.jurisdiccion }));
+    const obligaciones = dto.obligaciones.map((o) => ({
+      nombre: o.nombre.trim(),
+      jurisdiccion: o.jurisdiccion,
+      diaInicio: o.diaInicio,
+      diaVencimiento: o.diaVencimiento,
+    }));
     const config = await this.configModel
       .findOneAndUpdate({ estudioId, regimen }, { $set: { obligaciones } }, { new: true, upsert: true })
       .exec();
