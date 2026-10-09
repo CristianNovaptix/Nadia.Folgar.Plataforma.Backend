@@ -6,6 +6,7 @@ import { Cliente, ClienteDocument } from '../clientes/schemas/cliente.schema';
 import {
   RegimenFiscalConfig,
   RegimenFiscalConfigDocument,
+  correspondeAlMes,
 } from '../regimenes-fiscales/schemas/regimen-fiscal-config.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { PaginatedResult } from '../common/dto/pagination-query.dto';
@@ -186,6 +187,9 @@ export class IvaTareasService {
 
       for (const obligacion of obligaciones) {
         const diaInicio = obligacion.diaInicio ?? 1;
+        if (!correspondeAlMes(obligacion, Number(mes))) {
+          continue;
+        }
         if (diaDelMes !== undefined && diaDelMes < diaInicio) {
           continue;
         }

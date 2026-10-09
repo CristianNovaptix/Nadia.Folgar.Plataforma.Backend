@@ -356,6 +356,44 @@ describe('IvaTareasService', () => {
       expect(docs[1].fechaDesde).toEqual(new Date(Date.UTC(2026, 11, 25)));
       expect(docs[1].fechaHasta).toEqual(new Date(Date.UTC(2027, 0, 5)));
     });
+
+    it('respeta la frecuencia: una anual solo en su mes, una trimestral cada 3 meses', async () => {
+      regimenConfigModelMock.find.mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            regimen: RegimenFiscal.RESPONSABLE_INSCRIPTO,
+            estudioId,
+            obligaciones: [
+              { nombre: 'Ganancias', frecuencia: 'anual', mesInicio: 5 },
+              { nombre: 'Trimestral', frecuencia: 'trimestral', mesInicio: 1 },
+            ],
+          },
+        ]),
+      });
+
+      expect((await service.generarTareasDelMes('2026-05', estudioId)).creadas).toBe(1); // solo la anual
+      expect(docs[0].titulo).toContain('Ganancias');
+      expect((await service.generarTareasDelMes('2026-06', estudioId)).creadas).toBe(0);
+      expect((await service.generarTareasDelMes('2026-07', estudioId)).creadas).toBe(1); // trimestral
+      expect(docs[1].titulo).toContain('Trimestral');
+      expect((await service.generarTareasDelMes('2027-01', estudioId)).creadas).toBe(1); // trimestral
+    });
+
+    it('con meses elegidos a mano, crea solo en esos meses', async () => {
+      regimenConfigModelMock.find.mockReturnValue({
+        exec: jest.fn().mockResolvedValue([
+          {
+            regimen: RegimenFiscal.RESPONSABLE_INSCRIPTO,
+            estudioId,
+            obligaciones: [{ nombre: 'Sueltos', frecuencia: 'personalizada', meses: [1, 3, 8] }],
+          },
+        ]),
+      });
+
+      expect((await service.generarTareasDelMes('2026-03', estudioId)).creadas).toBe(1);
+      expect((await service.generarTareasDelMes('2026-04', estudioId)).creadas).toBe(0);
+      expect((await service.generarTareasDelMes('2026-08', estudioId)).creadas).toBe(1);
+    });
   });
 
   describe('moverTarea', () => {

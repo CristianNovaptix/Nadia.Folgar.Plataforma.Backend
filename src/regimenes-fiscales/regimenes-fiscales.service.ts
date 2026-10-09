@@ -28,6 +28,9 @@ export class RegimenesFiscalesService {
     const obligaciones = dto.obligaciones.map((o) => ({
       nombre: o.nombre.trim(),
       jurisdiccion: o.jurisdiccion,
+      frecuencia: o.frecuencia,
+      mesInicio: o.mesInicio,
+      meses: o.meses ? [...new Set(o.meses)].sort((a, b) => a - b) : undefined,
       diaInicio: o.diaInicio,
       diaVencimiento: o.diaVencimiento,
     }));
