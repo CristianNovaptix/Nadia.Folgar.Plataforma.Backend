@@ -35,6 +35,12 @@ import {
   AiTareasDocumentoPort,
   TareaPropuestaIA,
 } from './ports/ai-tareas-documento.port';
+import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
+
+/** Mismo nombre que usa el historial del cliente al registrar el alta de la tarea. */
+function nombreTarea(tarea: { titulo?: string; jurisdiccion?: string; periodo?: string }): string {
+  return tarea.titulo || [tarea.jurisdiccion, tarea.periodo].filter(Boolean).join(' ');
+}
 
 export interface GenerarTareasResultado {
   evaluados: number;
@@ -107,6 +113,7 @@ export class IvaTareasService {
     private readonly documentoTextoExtractorService: DocumentoTextoExtractorService,
     @Inject(AI_TAREAS_DOCUMENTO_PORT)
     private readonly aiTareasDocumentoPort: AiTareasDocumentoPort,
+    private readonly historial: ClienteHistorialService,
   ) {}
 
   /**
@@ -344,7 +351,14 @@ export class IvaTareasService {
     estudioId: Types.ObjectId,
     filtros: QueryKanbanDto,
   ): Promise<TareaConAdjuntos[]> {
-    const periodo = filtros.periodo ?? periodoActual();
+    let periodo: FilterQuery<TareaPresentacionDocument>['periodo'] =
+      filtros.periodo ?? periodoActual();
+    if (filtros.periodoDesde || filtros.periodoHasta) {
+      periodo = {
+        ...(filtros.periodoDesde ? { $gte: filtros.periodoDesde } : {}),
+        ...(filtros.periodoHasta ? { $lte: filtros.periodoHasta } : {}),
+      };
+    }
 
     const filter: FilterQuery<TareaPresentacionDocument> = {
       estudioId,
@@ -619,6 +633,7 @@ export class IvaTareasService {
     id: string,
     dto: UpdateTareaPresentacionDto,
     estudioId: Types.ObjectId,
+    usuarioId?: string,
   ): Promise<TareaPresentacionDocument> {
     const tarea = await this.findOneTarea(id, estudioId);
 
@@ -670,6 +685,17 @@ export class IvaTareasService {
       tarea.titulo = dto.titulo || undefined;
     }
     if (dto.enPapelera !== undefined) {
+      if (Boolean(tarea.enPapelera) !== dto.enPapelera) {
+        await this.historial.registrarCambioDeOrigen(
+          tarea.clienteId,
+          estudioId,
+          dto.enPapelera ? TIPO_EVENTO.REGISTRO_PAPELERA : TIPO_EVENTO.REGISTRO_RESTAURADO,
+          dto.enPapelera
+            ? `Se mandó a la papelera la tarea "${nombreTarea(tarea)}"`
+            : `Se restauró la tarea "${nombreTarea(tarea)}"`,
+          usuarioId,
+        );
+      }
       tarea.enPapelera = dto.enPapelera;
     }
 
@@ -684,8 +710,15 @@ export class IvaTareasService {
    * la tarjeta). Renumera la columna de origen igual que la mitad
    * "columna de origen" de `moverTarea`, para no dejar huecos en `posicion`.
    */
-  async removeTarea(id: string, estudioId: Types.ObjectId): Promise<void> {
+  async removeTarea(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
     const tarea = await this.findOneTarea(id, estudioId);
+    await this.historial.registrarCambioDeOrigen(
+      tarea.clienteId,
+      estudioId,
+      TIPO_EVENTO.REGISTRO_ELIMINADO,
+      `Se eliminó definitivamente la tarea "${nombreTarea(tarea)}"`,
+      usuarioId,
+    );
 
     await this.tareaModel.deleteOne({ _id: tarea._id }).exec();
     // Sin esto quedarían adjuntos huérfanos en Mongo (la tarea que los
@@ -710,13 +743,17 @@ export class IvaTareasService {
 
   /** Listado completo (con contenido) de los adjuntos de una tarjeta — se pide bajo demanda al abrirla, nunca en el listado del Kanban. */
   async findAdjuntos(tareaId: string, estudioId: Types.ObjectId): Promise<TareaAdjuntoDocument[]> {
-    await this.findOneTarea(tareaId, estudioId); // valida que la tarea exista y sea de este estudio
-
-    return this.adjuntoModel
-      .find({ tareaId: new Types.ObjectId(tareaId), estudioId })
-      .sort({ createdAt: -1 })
-      .populate('subidoPor', 'nombre')
-      .exec();
+    // Las dos consultas van en paralelo (cada ida y vuelta a la base suma demora al abrir la tarjeta);
+    // `findOneTarea` igual valida que la tarea exista y sea de este estudio antes de devolver nada.
+    const [, adjuntos] = await Promise.all([
+      this.findOneTarea(tareaId, estudioId),
+      this.adjuntoModel
+        .find({ tareaId: new Types.ObjectId(tareaId), estudioId })
+        .sort({ createdAt: -1 })
+        .populate('subidoPor', 'nombre')
+        .exec(),
+    ]);
+    return adjuntos;
   }
 
   /**
@@ -755,12 +792,17 @@ export class IvaTareasService {
     return adjunto;
   }
 
-  /** Borra un adjunto puntual; si era la portada de la tarjeta, limpia esa referencia (la tarjeta vuelve a no tener portada de imagen). */
+  /**
+   * Borra un adjunto puntual; si era la portada de la tarjeta, pasa a serlo la imagen más reciente
+   * que quede (pedido explícito: borrar la primera foto no debe dejar la tarjeta sin imagen). Sin
+   * otra imagen, la tarjeta queda sin portada. Devuelve la portada vigente para que el Frontend la
+   * refleje sin volver a pedir el tablero.
+   */
   async removeAdjunto(
     tareaId: string,
     adjuntoId: string,
     estudioId: Types.ObjectId,
-  ): Promise<void> {
+  ): Promise<{ portadaAdjunto: { _id: string; contentType: string; contenidoBase64: string } | null }> {
     const tarea = await this.findOneTarea(tareaId, estudioId);
 
     const adjunto = await this.adjuntoModel
@@ -772,9 +814,28 @@ export class IvaTareasService {
 
     await adjunto.deleteOne();
 
-    if (tarea.portadaAdjuntoId?.equals(adjunto._id)) {
-      tarea.portadaAdjuntoId = undefined;
-      await tarea.save();
+    if (!tarea.portadaAdjuntoId?.equals(adjunto._id)) {
+      const actual = tarea.portadaAdjuntoId
+        ? await this.adjuntoModel.findOne({ _id: tarea.portadaAdjuntoId, estudioId }).exec()
+        : null;
+      return {
+        portadaAdjunto: actual
+          ? { _id: actual._id.toString(), contentType: actual.contentType, contenidoBase64: actual.contenidoBase64 }
+          : null,
+      };
     }
+
+    const restantes = await this.adjuntoModel
+      .find({ tareaId: tarea._id, estudioId })
+      .sort({ createdAt: -1 })
+      .exec();
+    const siguiente = restantes.find((a) => esImagen(a.contentType));
+    tarea.portadaAdjuntoId = siguiente?._id;
+    await tarea.save();
+    return {
+      portadaAdjunto: siguiente
+        ? { _id: siguiente._id.toString(), contentType: siguiente.contentType, contenidoBase64: siguiente.contenidoBase64 }
+        : null,
+    };
   }
 }

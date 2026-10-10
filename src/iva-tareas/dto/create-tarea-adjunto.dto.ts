@@ -2,13 +2,13 @@ import { IsInt, IsNotEmpty, IsString, Max, MaxLength, Min } from 'class-validato
 
 /**
  * Tope de tamaño del archivo ORIGINAL (antes de codificar en base64) que se
- * acepta por adjunto — mismo criterio y mismo valor que
+ * acepta por adjunto — mismo criterio que
  * `MAX_DOCUMENTO_BYTES` de portal-clientes (ver la nota de alcance en
- * `tarea-adjunto.schema.ts`): 5 MB alcanza para una imagen, un PDF o una
- * captura de pantalla, pero un video real casi siempre lo va a superar —
+ * `tarea-adjunto.schema.ts`), subido de 5 MB a pedido del usuario: alcanza para una imagen, un PDF o una
+ * captura de pantalla; 11 MB es el máximo que entra en un documento de Mongo (16 MB) ya en base64. Un video real casi siempre lo va a superar —
  * eso queda documentado como limitación conocida, no resuelto acá.
  */
-export const MAX_ADJUNTO_BYTES = 5 * 1024 * 1024;
+export const MAX_ADJUNTO_BYTES = 11 * 1024 * 1024;
 
 /** Mismo margen de redondeo que `MAX_BASE64_LENGTH` de `CreateDocumentoDto`. */
 const MAX_BASE64_LENGTH = Math.ceil(MAX_ADJUNTO_BYTES / 3) * 4 + 1024;

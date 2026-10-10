@@ -1,3 +1,4 @@
+import { ClientesModule } from '../clientes/clientes.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Cliente, ClienteSchema } from '../clientes/schemas/cliente.schema';
@@ -25,6 +26,7 @@ import { PortalClientesController } from './portal-clientes.controller';
  */
 @Module({
   imports: [
+    ClientesModule,
     MongooseModule.forFeature([
       { name: Documento.name, schema: DocumentoSchema },
       { name: Comunicado.name, schema: ComunicadoSchema },

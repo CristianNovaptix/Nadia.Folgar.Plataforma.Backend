@@ -1,3 +1,4 @@
+import { ClienteHistorialService } from '../clientes/cliente-historial.service';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import {
@@ -78,6 +79,7 @@ describe('ExtractosIaService', () => {
       providers: [
         ExtractosIaService,
         { provide: getModelToken(ExtractoBancario.name), useValue: extractoModelMock },
+        { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
         { provide: PdfTextExtractorService, useValue: pdfTextExtractorMock },
         { provide: CuentasBancariasService, useValue: cuentasBancariasServiceMock },
         { provide: EXTRACTOS_PROCESSING_QUEUE, useValue: queueMock },

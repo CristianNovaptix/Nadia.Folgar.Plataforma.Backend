@@ -23,18 +23,29 @@ import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { QueryClienteDto } from './dto/query-cliente.dto';
 import { RegenerarPasswordDto } from '../users/dto/regenerar-password.dto';
+import { ClienteHistorialService, TIPO_EVENTO } from './cliente-historial.service';
 
 @ApiTags('clientes')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 @Controller('clientes')
 export class ClientesController {
-  constructor(private readonly clientesService: ClientesService) {}
+  constructor(
+    private readonly clientesService: ClientesService,
+    private readonly historial: ClienteHistorialService,
+  ) {}
 
   @Get()
   @Permissions(PERMISSIONS.CLIENTES_READ)
   findAll(@Query() query: QueryClienteDto, @CurrentUser() user: AuthenticatedUser) {
     return this.clientesService.findAll(query, new Types.ObjectId(user.estudioId));
+  }
+
+  /** "Ver historial" del menú de Clientes — ver `ClienteHistorialService`. */
+  @Get(':id/historial')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  historialCliente(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.historial.listar(id, new Types.ObjectId(user.estudioId));
   }
 
   @Get(':id')
@@ -45,36 +56,75 @@ export class ClientesController {
 
   @Post()
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
-  create(@Body() dto: CreateClienteDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.clientesService.create(dto, new Types.ObjectId(user.estudioId));
+  async create(@Body() dto: CreateClienteDto, @CurrentUser() user: AuthenticatedUser) {
+    const estudioId = new Types.ObjectId(user.estudioId);
+    const cliente = await this.clientesService.create(dto, estudioId);
+    const clienteId = cliente._id as Types.ObjectId;
+    await this.historial.registrar(
+      clienteId,
+      estudioId,
+      { tipo: TIPO_EVENTO.CLIENTE_CREADO, descripcion: 'Se dio de alta el cliente', origenId: new Types.ObjectId(clienteId) },
+      user.userId,
+    );
+    return cliente;
   }
 
   @Patch(':id')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
-  update(
+  async update(
     @Param('id') id: string,
     @Body() dto: UpdateClienteDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.clientesService.update(id, dto, new Types.ObjectId(user.estudioId));
+    const estudioId = new Types.ObjectId(user.estudioId);
+    const cliente = await this.clientesService.update(id, dto, estudioId);
+    const evento =
+      dto.activo === true
+        ? { tipo: TIPO_EVENTO.CLIENTE_ACTIVADO, descripcion: 'Se activó el cliente' }
+        : dto.activo === false
+          ? { tipo: TIPO_EVENTO.CLIENTE_DESACTIVADO, descripcion: 'Se desactivó el cliente' }
+          : { tipo: TIPO_EVENTO.CLIENTE_EDITADO, descripcion: 'Se editaron los datos del cliente' };
+    await this.historial.registrar(id, estudioId, evento, user.userId);
+    return cliente;
   }
 
   @Delete(':id')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
-  remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.clientesService.deactivate(id, new Types.ObjectId(user.estudioId));
+  async remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const estudioId = new Types.ObjectId(user.estudioId);
+    await this.clientesService.deactivate(id, estudioId);
+    await this.historial.registrar(
+      id,
+      estudioId,
+      { tipo: TIPO_EVENTO.CLIENTE_DESACTIVADO, descripcion: 'Se desactivó el cliente' },
+      user.userId,
+    );
   }
 
   @Post(':id/papelera')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
-  moverAPapelera(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.clientesService.moverAPapelera(id, new Types.ObjectId(user.estudioId));
+  async moverAPapelera(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const estudioId = new Types.ObjectId(user.estudioId);
+    await this.clientesService.moverAPapelera(id, estudioId);
+    await this.historial.registrar(
+      id,
+      estudioId,
+      { tipo: TIPO_EVENTO.CLIENTE_PAPELERA, descripcion: 'Se envió el cliente a la papelera' },
+      user.userId,
+    );
   }
 
   @Post(':id/restaurar')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
-  restaurarDePapelera(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.clientesService.restaurarDePapelera(id, new Types.ObjectId(user.estudioId));
+  async restaurarDePapelera(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const estudioId = new Types.ObjectId(user.estudioId);
+    await this.clientesService.restaurarDePapelera(id, estudioId);
+    await this.historial.registrar(
+      id,
+      estudioId,
+      { tipo: TIPO_EVENTO.CLIENTE_RESTAURADO, descripcion: 'Se restauró el cliente desde la papelera' },
+      user.userId,
+    );
   }
 
   @Delete(':id/definitivo')
@@ -90,6 +140,16 @@ export class ClientesController {
     const { usuario, password, emailEnviado } = await this.clientesService.crearUsuarioPortal(
       id,
       new Types.ObjectId(user.estudioId),
+    );
+    await this.historial.registrar(
+      id,
+      new Types.ObjectId(user.estudioId),
+      {
+        tipo: TIPO_EVENTO.USUARIO_PORTAL_CREADO,
+        descripcion: `Se creó el usuario del portal${usuario.email ? ` (${usuario.email})` : ''}`,
+        origenId: usuario._id,
+      },
+      user.userId,
     );
     // Nunca se devuelve el documento de `User` crudo (traería `passwordHash`)
     // — mismo criterio de saneo que `UsersService.toSummary`.
@@ -116,6 +176,17 @@ export class ClientesController {
       id,
       new Types.ObjectId(user.estudioId),
       dto.password,
+    );
+    await this.historial.registrar(
+      id,
+      new Types.ObjectId(user.estudioId),
+      {
+        tipo: TIPO_EVENTO.PASSWORD_PORTAL_CAMBIADA,
+        descripcion: emailEnviado
+          ? 'Se cambió la contraseña del portal y se le avisó por email'
+          : 'Se cambió la contraseña del portal',
+      },
+      user.userId,
     );
     return {
       usuario: {

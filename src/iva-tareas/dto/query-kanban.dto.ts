@@ -17,4 +17,15 @@ export class QueryKanbanDto {
   @IsString()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'periodo debe tener el formato YYYY-MM' })
   periodo?: string;
+
+  /** Rango "YYYY-MM" (inclusive). Si viene alguno de los dos, manda sobre `periodo`. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'periodoDesde debe tener el formato YYYY-MM' })
+  periodoDesde?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'periodoHasta debe tener el formato YYYY-MM' })
+  periodoHasta?: string;
 }

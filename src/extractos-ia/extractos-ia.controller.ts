@@ -102,6 +102,6 @@ export class ExtractosIaController {
   @Delete(':id')
   @Permissions(PERMISSIONS.EXTRACTOS_WRITE)
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.extractosIaService.eliminar(id, new Types.ObjectId(user.estudioId));
+    return this.extractosIaService.eliminar(id, new Types.ObjectId(user.estudioId), user.userId);
   }
 }

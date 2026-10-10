@@ -21,6 +21,14 @@ export class Reunion {
   @Prop({ trim: true })
   enlace?: string;
 
+  /** Quién la cargó. Las reuniones viejas no lo tienen y se siguen viendo para todos. */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User', index: true })
+  creadoPor?: Types.ObjectId;
+
+  /** Integrantes de Personal invitados: la reunión aparece también en su calendario. */
+  @Prop({ type: [{ type: SchemaTypes.ObjectId, ref: 'User' }], default: [], index: true })
+  miembros: Types.ObjectId[];
+
   /** Papelera del calendario: oculta la reunión hasta restaurarla o eliminarla definitivamente. */
   @Prop({ default: false, index: true })
   enPapelera: boolean;

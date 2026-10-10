@@ -1,3 +1,4 @@
+import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
@@ -25,6 +26,7 @@ export class PortalClientesService {
     @InjectModel(Comunicado.name) private readonly comunicadoModel: Model<ComunicadoDocument>,
     @InjectModel(Cliente.name) private readonly clienteModel: Model<ClienteDocument>,
     @Inject(MESSAGING_PROVIDER) private readonly messagingProvider: MessagingProvider,
+    private readonly historial: ClienteHistorialService,
   ) {}
 
   // ── Documentos ────────────────────────────────────────────────────────
@@ -74,11 +76,18 @@ export class PortalClientesService {
     return { data, total, page, limit };
   }
 
-  async removeDocumento(id: string, estudioId: Types.ObjectId): Promise<void> {
+  async removeDocumento(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
     const documento = await this.documentoModel.findOne({ _id: id, estudioId }).exec();
     if (!documento) {
       throw new NotFoundException('Documento no encontrado');
     }
+    await this.historial.registrarCambioDeOrigen(
+      documento.clienteId,
+      estudioId,
+      TIPO_EVENTO.REGISTRO_ELIMINADO,
+      `Se eliminó el documento "${documento.nombre}"`,
+      usuarioId,
+    );
     await documento.deleteOne();
   }
 
@@ -228,11 +237,18 @@ export class PortalClientesService {
     return comunicado;
   }
 
-  async removeComunicado(id: string, estudioId: Types.ObjectId): Promise<void> {
+  async removeComunicado(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
     const comunicado = await this.comunicadoModel.findOne({ _id: id, estudioId }).exec();
     if (!comunicado) {
       throw new NotFoundException('Comunicado no encontrado');
     }
+    await this.historial.registrarCambioDeOrigen(
+      comunicado.clienteId,
+      estudioId,
+      TIPO_EVENTO.REGISTRO_ELIMINADO,
+      `Se eliminó el comunicado "${comunicado.titulo}"`,
+      usuarioId,
+    );
     await comunicado.deleteOne();
   }
 

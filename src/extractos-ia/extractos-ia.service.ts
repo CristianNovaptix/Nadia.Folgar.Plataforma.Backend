@@ -1,3 +1,4 @@
+import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
 import {
   BadRequestException,
   Inject,
@@ -95,6 +96,7 @@ export class ExtractosIaService {
     private readonly extractoDeteccionService: ExtractoDeteccionService,
     @Inject(EXTRACTOS_PROCESSING_QUEUE)
     private readonly extractosQueue: ExtractosProcessingQueue,
+    private readonly historial: ClienteHistorialService,
   ) {}
 
   /**
@@ -317,8 +319,15 @@ export class ExtractosIaService {
   }
 
   /** Elimina un extracto ya cargado (p. ej. duplicado o subido por error). No hay soft-delete: no queda rastro para reprocesar. */
-  async eliminar(id: string, estudioId: Types.ObjectId): Promise<void> {
+  async eliminar(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
     const extracto = await this.obtenerDocumento(id, estudioId);
+    await this.historial.registrarCambioDeOrigen(
+      extracto.clienteId,
+      estudioId,
+      TIPO_EVENTO.REGISTRO_ELIMINADO,
+      `Se eliminó el extracto "${extracto.nombreArchivo}" (período ${extracto.periodo})`,
+      usuarioId,
+    );
     await extracto.deleteOne();
   }
 

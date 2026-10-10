@@ -82,8 +82,12 @@ export class ArcaSyncService {
     return this.toResumen(cliente, sincronizacion);
   }
 
-  /** Sincronización automática diaria de todos los clientes con clave fiscal de ARCA. */
-  @Cron(CronExpression.EVERY_DAY_AT_6AM)
+  /**
+   * Sincronización automática diaria (12 de la noche, al empezar el día, hora de Argentina)
+   * de todos los clientes con clave fiscal de ARCA, para que al abrir uno ya estén sus
+   * datos guardados.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT, { timeZone: 'America/Argentina/Buenos_Aires' })
   async sincronizarTodos(): Promise<void> {
     const clientes = await this.clienteModel.find(FILTRO_CON_ARCA).exec();
     let errores = 0;

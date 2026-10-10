@@ -1,4 +1,5 @@
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsMongoId,
@@ -82,6 +83,11 @@ export class CreateReunionDto {
   @IsOptional()
   @IsString()
   enlace?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  miembros?: string[];
 }
 
 export class UpdateReunionDto {
@@ -107,4 +113,9 @@ export class UpdateReunionDto {
   @IsOptional()
   @IsString()
   enlace?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  miembros?: string[];
 }

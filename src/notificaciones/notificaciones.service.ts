@@ -1,3 +1,4 @@
+import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
@@ -69,6 +70,7 @@ export class NotificacionesService {
     private readonly notificacionEnviadaModel: Model<NotificacionEnviadaDocument>,
     @InjectModel(Cliente.name) private readonly clienteModel: Model<ClienteDocument>,
     @Inject(MESSAGING_PROVIDER) private readonly messagingProvider: MessagingProvider,
+    private readonly historial: ClienteHistorialService,
   ) {}
 
   // ── Vencimientos ──────────────────────────────────────────────────────
@@ -149,8 +151,15 @@ export class NotificacionesService {
     return vencimiento;
   }
 
-  async removeVencimiento(id: string, estudioId: Types.ObjectId): Promise<void> {
+  async removeVencimiento(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
     const vencimiento = await this.findOneVencimiento(id, estudioId);
+    await this.historial.registrarCambioDeOrigen(
+      vencimiento.clienteId,
+      estudioId,
+      TIPO_EVENTO.REGISTRO_ELIMINADO,
+      `Se eliminó el vencimiento "${vencimiento.tipo}" del ${new Date(vencimiento.fecha).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`,
+      usuarioId,
+    );
     await vencimiento.deleteOne();
   }
 

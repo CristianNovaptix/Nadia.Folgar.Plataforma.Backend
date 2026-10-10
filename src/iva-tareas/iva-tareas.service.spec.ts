@@ -1,3 +1,4 @@
+import { ClienteHistorialService } from '../clientes/cliente-historial.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
@@ -271,6 +272,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: fake.model },
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -442,6 +444,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: fake.model },
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -537,6 +540,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: fake.model },
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -622,6 +626,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: {} },
           { provide: getModelToken(TareaAdjunto.name), useValue: {} },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: {} },
           { provide: getModelToken(User.name), useValue: userModel },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -673,6 +678,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: fake.model },
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -751,6 +757,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: fake.model },
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: { exists: jest.fn() } },
           { provide: getModelToken(User.name), useValue: userModelMock },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -820,6 +827,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: fake.model },
           { provide: getModelToken(TareaAdjunto.name), useValue: fakeAdjunto.model },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
           { provide: getModelToken(User.name), useValue: userModelMock },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },
@@ -925,6 +933,29 @@ describe('IvaTareasService', () => {
       expect(tarea.portadaAdjuntoId).toBeUndefined();
     });
 
+    it('removeAdjunto de la portada pasa la portada a otra imagen que quede', async () => {
+      const otra = await service.addAdjunto(
+        tarea._id.toString(),
+        { nombre: 'a.png', contentType: 'image/png', contenidoBase64: 'aGVsbG8=', tamanioBytes: 5 },
+        estudioId,
+      );
+      await service.addAdjunto(
+        tarea._id.toString(),
+        { nombre: 'doc.pdf', contentType: 'application/pdf', contenidoBase64: 'aGVsbG8=', tamanioBytes: 5 },
+        estudioId,
+      );
+      const portada = await service.addAdjunto(
+        tarea._id.toString(),
+        { nombre: 'b.png', contentType: 'image/png', contenidoBase64: 'aGVsbG8=', tamanioBytes: 5 },
+        estudioId,
+      );
+
+      const res = await service.removeAdjunto(tarea._id.toString(), portada._id.toString(), estudioId);
+
+      expect(String(tarea.portadaAdjuntoId)).toBe(otra._id.toString());
+      expect(res.portadaAdjunto?._id).toBe(otra._id.toString());
+    });
+
     it('removeAdjunto tira NotFoundException si el adjunto no existe (o es de otra tarea)', async () => {
       await expect(
         service.removeAdjunto(tarea._id.toString(), new Types.ObjectId().toString(), estudioId),
@@ -983,6 +1014,7 @@ describe('IvaTareasService', () => {
           IvaTareasService,
           { provide: getModelToken(TareaPresentacion.name), useValue: {} },
           { provide: getModelToken(TareaAdjunto.name), useValue: {} },
+          { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
           { provide: getModelToken(Cliente.name), useValue: {} },
           { provide: getModelToken(User.name), useValue: {} },
           { provide: getModelToken(RegimenFiscalConfig.name), useValue: regimenConfigModelMock },

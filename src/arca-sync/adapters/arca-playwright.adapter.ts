@@ -140,6 +140,10 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
           datos.notas.vencimientos = datos.notas.deudas;
         }
         if (deCtacte) datos.deudas = mapearDeudas(deCtacte.deudas);
+        else if (ctacte && !datos.notas.deudas) {
+          datos.notas.deudas = `ARCA no ofrece el estado de cuenta del CUIT ${cuit} con esta clave fiscal.`;
+          datos.notas.vencimientos ??= datos.notas.deudas;
+        }
         if (deSeti) {
           datos.presentaciones = mapearPresentaciones(
             deSeti.presentadas,
@@ -176,9 +180,9 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
     // en vez de a Cuentas Tributarias.
     await p.waitForURL(/ctacte\.cloud\.afip\.gob\.ar|\/ccam\//, { waitUntil: 'commit' });
     if (p.url().includes('/ccam/')) {
-      const deudas = await this.leerCcma(p);
+      const resultado = await this.leerCcmaPorCuit(p, cuits);
       await p.close();
-      return { [cuits[0]]: { deudas, faltas: [], vencimientos: [] } };
+      return resultado;
     }
     await p.waitForLoadState('load');
 
@@ -215,6 +219,31 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
       };
     }
     await p.close();
+    return resultado;
+  }
+
+  /**
+   * Si la clave fiscal representa a otras personas, CCMA arranca en una pantalla para
+   * elegir el CUIT (`seleccionaCuit.asp`): se elige cada uno y se vuelve a esa pantalla
+   * para el siguiente. Sin representados entra directo a la del propio CUIT.
+   */
+  private async leerCcmaPorCuit(p: Page, cuits: string[]) {
+    await p.waitForLoadState('domcontentloaded');
+    const vacio = { faltas: [] as Record<string, unknown>[], vencimientos: [] as Record<string, unknown>[] };
+    if (!p.url().includes('seleccionaCuit')) {
+      return { [cuits[0]]: { deudas: await this.leerCcma(p), ...vacio } };
+    }
+    const seleccion = p.url();
+    const disponibles = await p.$$eval('select[name="selectCuit"] option', (os) =>
+      os.map((o) => (o as HTMLOptionElement).value),
+    );
+    const resultado: Record<string, { deudas: Record<string, unknown>[] } & typeof vacio> = {};
+    for (const cuit of cuits.filter((c) => disponibles.includes(c))) {
+      if (!p.url().includes('seleccionaCuit')) await p.goto(seleccion, { waitUntil: 'domcontentloaded' });
+      await p.selectOption('select[name="selectCuit"]', cuit);
+      await Promise.all([p.waitForURL(/P02_ctacte/, { waitUntil: 'domcontentloaded' }), p.click('input[name="btnEnvia"]')]);
+      resultado[cuit] = { deudas: await this.leerCcma(p), ...vacio };
+    }
     return resultado;
   }
 

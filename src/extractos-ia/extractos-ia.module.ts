@@ -1,3 +1,4 @@
+import { ClientesModule } from '../clientes/clientes.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
@@ -70,6 +71,7 @@ const inlineQueueLogger = new Logger('InlineExtractosQueue');
  */
 @Module({
   imports: [
+    ClientesModule,
     MongooseModule.forFeature([{ name: ExtractoBancario.name, schema: ExtractoBancarioSchema }]),
     ...queueImports,
     CuentasBancariasModule,

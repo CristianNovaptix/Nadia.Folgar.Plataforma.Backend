@@ -1,3 +1,4 @@
+import { ClienteHistorialService } from '../clientes/cliente-historial.service';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { NotFoundException } from '@nestjs/common';
@@ -73,6 +74,7 @@ describe('PortalClientesService', () => {
       providers: [
         PortalClientesService,
         { provide: getModelToken(Documento.name), useValue: documentoModelMock },
+        { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
         { provide: getModelToken(Comunicado.name), useValue: comunicadoModelMock },
         { provide: getModelToken(Cliente.name), useValue: clienteModelMock },
         { provide: MESSAGING_PROVIDER, useValue: messagingProviderMock },

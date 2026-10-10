@@ -73,7 +73,7 @@ export class NotificacionesController {
   @Delete('vencimientos/:id')
   @Permissions(PERMISSIONS.NOTIFICACIONES_WRITE)
   removeVencimiento(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.notificacionesService.removeVencimiento(id, new Types.ObjectId(user.estudioId));
+    return this.notificacionesService.removeVencimiento(id, new Types.ObjectId(user.estudioId), user.userId);
   }
 
   // ── Reglas de notificación ───────────────────────────────────────────

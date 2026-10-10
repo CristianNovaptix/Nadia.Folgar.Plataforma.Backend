@@ -57,7 +57,7 @@ export class PortalClientesController {
   @Delete('documentos/:id')
   @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_WRITE)
   removeDocumento(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.portalClientesService.removeDocumento(id, new Types.ObjectId(user.estudioId));
+    return this.portalClientesService.removeDocumento(id, new Types.ObjectId(user.estudioId), user.userId);
   }
 
   // ── Comunicados ───────────────────────────────────────────────────────
@@ -87,6 +87,6 @@ export class PortalClientesController {
   @Delete('comunicados/:id')
   @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_WRITE)
   removeComunicado(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.portalClientesService.removeComunicado(id, new Types.ObjectId(user.estudioId));
+    return this.portalClientesService.removeComunicado(id, new Types.ObjectId(user.estudioId), user.userId);
   }
 }

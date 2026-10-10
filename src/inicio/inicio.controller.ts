@@ -83,30 +83,45 @@ export class InicioController {
       new Date(query.desde),
       new Date(query.hasta),
       new Types.ObjectId(user.estudioId),
+      new Types.ObjectId(user.userId),
     );
   }
 
   @Get('reuniones/papelera')
   @Permissions(PERMISSIONS.CLIENTES_READ)
   findReunionesPapelera(@CurrentUser() user: AuthenticatedUser) {
-    return this.inicioService.findReunionesPapelera(new Types.ObjectId(user.estudioId));
+    return this.inicioService.findReunionesPapelera(
+      new Types.ObjectId(user.estudioId),
+      new Types.ObjectId(user.userId),
+    );
+  }
+
+  /** Personal para "Miembros" de una reunión — solo pide `clientes.read`, no `users.read`. */
+  @Get('reuniones/miembros')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  findMiembrosReunion() {
+    return this.inicioService.findMiembrosReunion();
   }
 
   @Post('reuniones')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
   createReunion(@Body() dto: CreateReunionDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.inicioService.createReunion(dto, new Types.ObjectId(user.estudioId));
+    return this.inicioService.createReunion(
+      dto,
+      new Types.ObjectId(user.estudioId),
+      new Types.ObjectId(user.userId),
+    );
   }
 
   @Patch('reuniones/:id')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
   updateReunion(@Param('id') id: string, @Body() dto: UpdateReunionDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.inicioService.updateReunion(id, dto, new Types.ObjectId(user.estudioId));
+    return this.inicioService.updateReunion(id, dto, new Types.ObjectId(user.estudioId), user.userId);
   }
 
   @Delete('reuniones/:id')
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
   deleteReunion(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.inicioService.deleteReunion(id, new Types.ObjectId(user.estudioId));
+    return this.inicioService.deleteReunion(id, new Types.ObjectId(user.estudioId), user.userId);
   }
 }

@@ -1,3 +1,4 @@
+import { ClientesModule } from '../clientes/clientes.module';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Cliente, ClienteSchema } from '../clientes/schemas/cliente.schema';
@@ -26,6 +27,7 @@ import { WhatsappStubAdapter } from './adapters/whatsapp-stub.adapter';
  */
 @Module({
   imports: [
+    ClientesModule,
     MongooseModule.forFeature([
       { name: Vencimiento.name, schema: VencimientoSchema },
       { name: ReglaNotificacion.name, schema: ReglaNotificacionSchema },

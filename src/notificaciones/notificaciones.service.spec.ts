@@ -1,3 +1,4 @@
+import { ClienteHistorialService } from '../clientes/cliente-historial.service';
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
@@ -60,6 +61,7 @@ describe('NotificacionesService', () => {
       providers: [
         NotificacionesService,
         { provide: getModelToken(Vencimiento.name), useValue: vencimientoModelMock },
+        { provide: ClienteHistorialService, useValue: { registrarCambioDeOrigen: jest.fn() } },
         { provide: getModelToken(ReglaNotificacion.name), useValue: reglaModelMock },
         {
           provide: getModelToken(NotificacionEnviada.name),

@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cliente, ClienteSchema } from '../clientes/schemas/cliente.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { ClientesModule } from '../clientes/clientes.module';
 import {
   RegimenFiscalConfig,
   RegimenFiscalConfigSchema,
@@ -35,6 +36,7 @@ import { OpenAiTareasDocumentoAdapter } from './adapters/openai-tareas-documento
  */
 @Module({
   imports: [
+    ClientesModule,
     MongooseModule.forFeature([
       { name: TareaPresentacion.name, schema: TareaPresentacionSchema },
       { name: TareaAdjunto.name, schema: TareaAdjuntoSchema },

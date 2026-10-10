@@ -133,13 +133,13 @@ export class IvaTareasController {
     @Body() dto: UpdateTareaPresentacionDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.ivaTareasService.updateTarea(id, dto, new Types.ObjectId(user.estudioId));
+    return this.ivaTareasService.updateTarea(id, dto, new Types.ObjectId(user.estudioId), user.userId);
   }
 
   @Delete(':id')
   @Permissions(PERMISSIONS.IVA_TAREAS_WRITE)
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.ivaTareasService.removeTarea(id, new Types.ObjectId(user.estudioId));
+    return this.ivaTareasService.removeTarea(id, new Types.ObjectId(user.estudioId), user.userId);
   }
 
   // ── Adjuntos ────────────────────────────────────────────────────────
