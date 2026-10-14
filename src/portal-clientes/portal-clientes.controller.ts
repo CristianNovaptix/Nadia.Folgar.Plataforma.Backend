@@ -20,6 +20,7 @@ import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { PortalClientesService } from './portal-clientes.service';
 import { CreateDocumentoDto } from './dto/create-documento.dto';
 import { QueryDocumentoDto } from './dto/query-documento.dto';
+import { UpdateDocumentoDto } from './dto/update-documento.dto';
 import { CreateComunicadoDto } from './dto/create-comunicado.dto';
 import { UpdateComunicadoDto } from './dto/update-comunicado.dto';
 import { QueryComunicadoDto } from './dto/query-comunicado.dto';
@@ -52,6 +53,16 @@ export class PortalClientesController {
   @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_WRITE)
   createDocumento(@Body() dto: CreateDocumentoDto, @CurrentUser() user: AuthenticatedUser) {
     return this.portalClientesService.createDocumento(dto, new Types.ObjectId(user.estudioId));
+  }
+
+  @Patch('documentos/:id')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_WRITE)
+  updateDocumento(
+    @Param('id') id: string,
+    @Body() dto: UpdateDocumentoDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.portalClientesService.updateDocumento(id, dto, new Types.ObjectId(user.estudioId));
   }
 
   @Delete('documentos/:id')

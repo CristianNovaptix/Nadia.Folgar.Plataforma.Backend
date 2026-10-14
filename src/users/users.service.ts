@@ -113,7 +113,13 @@ export class UsersService {
       user.email = email;
     }
 
-    Object.assign(user, resto);
+    // Sin este filtro, los campos que no vinieron en el body llegan como
+    // `undefined` (transform del ValidationPipe) y `Object.assign` los borra
+    // de Mongo — bug real: editar un integrante de Personal le borraba `activo`.
+    Object.assign(
+      user,
+      Object.fromEntries(Object.entries(resto).filter(([, valor]) => valor !== undefined)),
+    );
     await user.save();
     return user;
   }

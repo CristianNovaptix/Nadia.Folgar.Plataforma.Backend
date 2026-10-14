@@ -8,6 +8,7 @@ import { ImporteManualMes } from './schemas/importe-manual-mes.schema';
 import { Reunion } from './schemas/reunion.schema';
 import { User } from '../users/schemas/user.schema';
 import { ClienteHistorialService } from '../clientes/cliente-historial.service';
+import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 
 describe('InicioService', () => {
   let service: InicioService;
@@ -28,6 +29,10 @@ describe('InicioService', () => {
         { provide: getModelToken(Reunion.name), useValue: reunionModelMock },
         { provide: getModelToken(User.name), useValue: {} },
         { provide: ClienteHistorialService, useValue: historialMock },
+        {
+          provide: GoogleCalendarService,
+          useValue: { sincronizarReunion: jest.fn(), quitarReunion: jest.fn() },
+        },
       ],
     }).compile();
     service = moduleRef.get(InicioService);

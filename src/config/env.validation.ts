@@ -20,6 +20,8 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
   GOOGLE_OAUTH_CALLBACK_URL: z.string().url().optional(),
+  /** Vuelta de Google al conectar Google Calendar ("Sincronizar cuenta" de la Agenda). */
+  GOOGLE_CALENDAR_CALLBACK_URL: z.string().url().optional(),
   LINKEDIN_OAUTH_CLIENT_ID: z.string().optional(),
   LINKEDIN_OAUTH_CLIENT_SECRET: z.string().optional(),
   LINKEDIN_OAUTH_CALLBACK_URL: z.string().url().optional(),

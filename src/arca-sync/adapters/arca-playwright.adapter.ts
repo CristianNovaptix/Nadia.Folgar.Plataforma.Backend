@@ -3,6 +3,7 @@ import { chromium, type BrowserContext, type Page } from 'playwright-core';
 import {
   ARCA_DATOS_VACIOS,
   ArcaBloque,
+  ArcaCuentaCorriente,
   ArcaContribuyente,
   ArcaCredenciales,
   ArcaDatos,
@@ -11,8 +12,8 @@ import {
 } from '../ports/arca-portal.port';
 import {
   comoLista,
-  filasCcmaComoDeudas,
   mapearComprobante,
+  mapearCuentaCorriente,
   mapearDeudas,
   mapearPresentaciones,
   mapearVencimientos,
@@ -29,6 +30,8 @@ const PORTAL = 'https://portalcf.cloud.afip.gob.ar/portal';
 const SETI = 'https://seti.afip.gob.ar/setiweb';
 const MCMP = 'https://fes.afip.gob.ar/mcmp/jsp';
 const TIMEOUT_MS = 60_000;
+/** Desde qué período se pide el cálculo de deuda de la cuenta corriente (CCMA). */
+const CCMA_DESDE = '01/2004';
 const ORDEN_PRESENTACIONES = encodeURIComponent('{"valor":"FECHA_PRESENTACION","tipo":"desc"}');
 const ORDEN_VEPS = encodeURIComponent('{"valor":"vepId","tipo":"desc"}');
 
@@ -121,9 +124,19 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
       });
       const cuits = contribuyentes.map((c) => c.cuit);
 
-      // Cuentas Tributarias ("Estado de cuenta"): deudas, DDJJ faltantes y, para los
-      // representados, vencimientos.
-      const ctacte = await bloque(cuits, ['deudas'], () => this.leerCuentasTributarias(context, page, cuits));
+      // Los tres servicios que siguen no dependen entre sí: se leen a la vez, cada uno
+      // desde su propia pestaña del portal.
+      // - Cuentas Tributarias ("Estado de cuenta"): deudas, DDJJ faltantes y, para los
+      //   representados, vencimientos.
+      // - Cuenta corriente de autónomos/monotributistas (CCMA).
+      // - Mis Comprobantes (escribe directo en los datos de cada CUIT).
+      const [ctacte, ccma] = await Promise.all([
+        bloque(cuits, ['deudas'], () => this.conPortal(context, (portal) => this.leerCuentasTributarias(context, portal, cuits))),
+        bloque(cuits, ['cuentaCorriente'], () => this.conPortal(context, (portal) => this.leerCcmaPorCuit(context, portal, cuits))),
+        bloque(cuits, ['comprobantes'], () =>
+          this.conPortal(context, (portal) => this.leerComprobantes(context, portal, cuits, datosDe)),
+        ),
+      ]);
 
       for (const cuit of cuits) {
         const datos = datosDe(cuit);
@@ -138,6 +151,10 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
           datos.vencimientos = mapearVencimientosCtacte(deCtacte.vencimientos);
         } else if (!datos.notas.vencimientos) {
           datos.notas.vencimientos = datos.notas.deudas;
+        }
+        if (ccma?.[cuit]) datos.cuentaCorriente = ccma[cuit];
+        else if (ccma && !datos.notas.cuentaCorriente) {
+          datos.notas.cuentaCorriente = `ARCA no ofrece la cuenta corriente (CCMA) del CUIT ${cuit} con esta clave fiscal.`;
         }
         if (deCtacte) datos.deudas = mapearDeudas(deCtacte.deudas);
         else if (ctacte && !datos.notas.deudas) {
@@ -159,7 +176,6 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
         }
       }
 
-      await bloque(cuits, ['comprobantes'], () => this.leerComprobantes(context, page, cuits, datosDe));
       return { contribuyentes, datosPorCuit };
     } finally {
       await browser.close();
@@ -172,18 +188,9 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
    * antes de pedir sus datos.
    */
   private async leerCuentasTributarias(context: BrowserContext, portal: Page, cuits: string[]) {
-    await portal.goto(`${PORTAL}/app/`, { waitUntil: 'domcontentloaded' });
-    const acceso = portal.getByText('Estado de cuenta', { exact: true }).first();
-    await acceso.waitFor();
-    const [p] = await Promise.all([context.waitForEvent('page', { timeout: 30_000 }), acceso.click()]);
-    // A monotributistas y autónomos ARCA los manda a la cuenta corriente vieja (CCMA)
-    // en vez de a Cuentas Tributarias.
-    await p.waitForURL(/ctacte\.cloud\.afip\.gob\.ar|\/ccam\//, { waitUntil: 'commit' });
-    if (p.url().includes('/ccam/')) {
-      const resultado = await this.leerCcmaPorCuit(p, cuits);
-      await p.close();
-      return resultado;
-    }
+    // Desde "Mis servicios": el atajo "Estado de cuenta" del inicio manda a algunos
+    // contribuyentes a la cuenta corriente (CCMA) en vez de acá.
+    const p = await this.abrirServicio(context, portal, 'SISTEMA DE CUENTAS TRIBUTARIAS', /ctacte\.cloud\.afip\.gob\.ar/);
     await p.waitForLoadState('load');
 
     const resultado: Record<string, { deudas: Record<string, unknown>[]; faltas: Record<string, unknown>[]; vencimientos: Record<string, unknown>[] }> = {};
@@ -227,34 +234,52 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
    * elegir el CUIT (`seleccionaCuit.asp`): se elige cada uno y se vuelve a esa pantalla
    * para el siguiente. Sin representados entra directo a la del propio CUIT.
    */
-  private async leerCcmaPorCuit(p: Page, cuits: string[]) {
-    await p.waitForLoadState('domcontentloaded');
-    const vacio = { faltas: [] as Record<string, unknown>[], vencimientos: [] as Record<string, unknown>[] };
+  private async leerCcmaPorCuit(context: BrowserContext, portal: Page, cuits: string[]) {
+    const p = await this.abrirServicio(context, portal, 'CCMA - CUENTA CORRIENTE DE CONTRIBUYENTES MONOTRIBUTISTAS Y AUTONOMOS', /\/ccam\//);
+    const resultado: Record<string, ArcaCuentaCorriente> = {};
     if (!p.url().includes('seleccionaCuit')) {
-      return { [cuits[0]]: { deudas: await this.leerCcma(p), ...vacio } };
+      resultado[cuits[0]] = await this.leerCcma(p);
+    } else {
+      const seleccion = p.url();
+      const disponibles = await p.$$eval('select[name="selectCuit"] option', (os) =>
+        os.map((o) => (o as HTMLOptionElement).value),
+      );
+      for (const cuit of cuits.filter((c) => disponibles.includes(c))) {
+        if (!p.url().includes('seleccionaCuit')) await p.goto(seleccion, { waitUntil: 'domcontentloaded' });
+        await p.selectOption('select[name="selectCuit"]', cuit);
+        await Promise.all([p.waitForURL(/P02_ctacte/, { waitUntil: 'domcontentloaded' }), p.click('input[name="btnEnvia"]')]);
+        resultado[cuit] = await this.leerCcma(p);
+      }
     }
-    const seleccion = p.url();
-    const disponibles = await p.$$eval('select[name="selectCuit"] option', (os) =>
-      os.map((o) => (o as HTMLOptionElement).value),
-    );
-    const resultado: Record<string, { deudas: Record<string, unknown>[] } & typeof vacio> = {};
-    for (const cuit of cuits.filter((c) => disponibles.includes(c))) {
-      if (!p.url().includes('seleccionaCuit')) await p.goto(seleccion, { waitUntil: 'domcontentloaded' });
-      await p.selectOption('select[name="selectCuit"]', cuit);
-      await Promise.all([p.waitForURL(/P02_ctacte/, { waitUntil: 'domcontentloaded' }), p.click('input[name="btnEnvia"]')]);
-      resultado[cuit] = { deudas: await this.leerCcma(p), ...vacio };
-    }
+    await p.close();
     return resultado;
   }
 
   /**
    * CCMA (cuenta corriente de autónomos/monotributistas): "Cálculo de deuda" desde
-   * 01/2016 y se leen las filas de la tabla, que ARCA muestra de a 12 períodos.
+   * 01/2004 hasta el mes en curso, y se leen las filas de la tabla de a 48 períodos
+   * (lo máximo que permite ARCA; por defecto muestra 12).
    */
-  private async leerCcma(p: Page): Promise<Record<string, unknown>[]> {
+  private async leerCcma(p: Page): Promise<ArcaCuentaCorriente> {
     await p.waitForLoadState('domcontentloaded');
-    await p.locator('input[name="perdesde2"]').fill('01/2016');
+    const hoy = new Date();
+    const desde = CCMA_DESDE;
+    const hasta = `${String(hoy.getMonth() + 1).padStart(2, '0')}/${hoy.getFullYear()}`;
+    await p.locator('input[name="perdesde2"]').fill(desde);
+    await p.locator('input[name="perhasta2"]').fill(hasta);
     await Promise.all([p.waitForURL(/P04_ctacte/, { waitUntil: 'domcontentloaded' }), p.click('input[name="CalDeud"]')]);
+    const resumen = (await p.innerText('body')).replace(/\s+/g, ' ');
+    const ultimo = p.locator('#ultimoPeriodo');
+    if ((await p.locator('#rango').count()) && (await ultimo.count())) {
+      const antes = await ultimo.inputValue();
+      await p.selectOption('#rango', '48');
+      // Con 12 períodos o menos no cambia nada: no hay que esperar más.
+      await p
+        .waitForFunction((a) => (document.getElementById('ultimoPeriodo') as HTMLInputElement | null)?.value !== a, antes, {
+          timeout: 15_000,
+        })
+        .catch(() => undefined);
+    }
     const filas: string[][] = [];
     for (let pagina = 0; pagina < 20; pagina += 1) {
       await p.locator('#contenedor').waitFor({ state: 'attached' });
@@ -263,13 +288,12 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
           trs.map((tr) => Array.from(tr.children).map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim())),
         )),
       );
-      const ultimo = p.locator('#ultimoPeriodo');
       if (!(await p.locator('#mas0').isVisible()) || !(await ultimo.count())) break;
       const antes = await ultimo.inputValue();
       await p.click('#mas0');
       await p.waitForFunction((a) => (document.getElementById('ultimoPeriodo') as HTMLInputElement | null)?.value !== a, antes);
     }
-    return filasCcmaComoDeudas(filas);
+    return mapearCuentaCorriente(filas, resumen, desde, hasta);
   }
 
   private async leerComprobantes(
@@ -354,17 +378,56 @@ export class ArcaPlaywrightAdapter implements ArcaPortalPort {
 
   /**
    * Abre un servicio desde "Mis servicios" del portal (ARCA lo abre en una
-   * pestaña nueva ya autenticada) y espera a que cargue.
+   * pestaña nueva ya autenticada) y espera a que cargue. A veces esa pestaña se
+   * queda trabada en el login de ARCA: se cierra y se vuelve a abrir una vez.
    */
-  private async abrirServicio(context: BrowserContext, portal: Page, titulo: string, destino: RegExp): Promise<Page> {
+  private async abrirServicio(
+    context: BrowserContext,
+    portal: Page,
+    titulo: string,
+    destino: RegExp,
+    reintento = false,
+  ): Promise<Page> {
     await portal.goto(`${PORTAL}/app/mis-servicios`, { waitUntil: 'domcontentloaded' });
     const tarjeta = portal.getByText(titulo, { exact: true }).first();
     await tarjeta.waitFor();
-    const [nueva] = await Promise.all([context.waitForEvent('page', { timeout: 30_000 }), tarjeta.click()]);
-    await nueva.waitForURL(destino);
+    const nueva = await this.abrirPestana(portal, () => tarjeta.click());
+    try {
+      await nueva.waitForURL(destino, { waitUntil: 'commit' });
+    } catch (error) {
+      await nueva.close();
+      if (reintento) throw error;
+      return this.abrirServicio(context, portal, titulo, destino, true);
+    }
     await nueva.waitForLoadState('domcontentloaded');
     await nueva.waitForTimeout(3000);
     return nueva;
+  }
+
+  /**
+   * Clic que abre una pestaña nueva desde `portal` (se espera la pestaña que abre esa
+   * página, no cualquiera: hay varios servicios abriéndose a la vez). ARCA a veces
+   * tarda o ignora el primer clic, así que se reintenta una vez antes de darse por vencido.
+   */
+  private async abrirPestana(portal: Page, clic: () => Promise<void>): Promise<Page> {
+    for (let intento = 0; ; intento += 1) {
+      try {
+        const [nueva] = await Promise.all([portal.waitForEvent('popup', { timeout: TIMEOUT_MS }), clic()]);
+        return nueva;
+      } catch (error) {
+        if (intento >= 1) throw error;
+      }
+    }
+  }
+
+  /** Corre `leer` con una pestaña propia del portal (misma sesión), y la cierra al terminar. */
+  private async conPortal<T>(context: BrowserContext, leer: (portal: Page) => Promise<T>): Promise<T> {
+    const portal = await context.newPage();
+    try {
+      return await leer(portal);
+    } finally {
+      await portal.close();
+    }
   }
 
   /** GET dentro de la sesión del navegador (cookies de ARCA incluidas). */

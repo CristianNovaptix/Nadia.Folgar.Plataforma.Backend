@@ -6,6 +6,7 @@ import { ImporteManualMes } from './schemas/importe-manual-mes.schema';
 import { Reunion } from './schemas/reunion.schema';
 import { User } from '../users/schemas/user.schema';
 import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
+import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import {
   CreateGastoDto,
   CreateReunionDto,
@@ -32,6 +33,7 @@ export class InicioService {
     @InjectModel(Reunion.name) private readonly reunionModel: Model<Reunion>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     private readonly historial: ClienteHistorialService,
+    private readonly googleCalendar: GoogleCalendarService,
   ) {}
 
   findGastos(periodo: string, estudioId: Types.ObjectId) {
@@ -117,6 +119,7 @@ export class InicioService {
 
   async createReunion(dto: CreateReunionDto, estudioId: Types.ObjectId, userId: Types.ObjectId) {
     const reunion = await this.reunionModel.create({ ...dto, estudioId, creadoPor: userId });
+    await this.googleCalendar.sincronizarReunion(reunion._id);
     return reunion.populate([
       { path: 'clienteId', select: 'nombre' },
       { path: 'miembros', select: 'nombre' },
@@ -158,6 +161,7 @@ export class InicioService {
       .populate('miembros', 'nombre')
       .exec();
     if (!reunion) throw new NotFoundException('Reunión no encontrada');
+    await this.googleCalendar.sincronizarReunion(reunion._id);
     return reunion;
   }
 
@@ -171,6 +175,7 @@ export class InicioService {
       `Se eliminó definitivamente la reunión "${reunion.titulo}"`,
       usuarioId,
     );
+    await this.googleCalendar.quitarReunion(reunion);
     await reunion.deleteOne();
   }
 }

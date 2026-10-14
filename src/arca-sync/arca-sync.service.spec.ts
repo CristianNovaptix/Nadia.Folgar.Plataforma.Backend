@@ -47,7 +47,7 @@ describe('ArcaSyncService', () => {
   });
 
   it('entra con el CUIT solo en dígitos y la clave descifrada, y guarda los datos de cada representado', async () => {
-    const datos = { vencimientos: [], deudas: [], comprobantes: null, veps: null, presentaciones: null, notas: {} };
+    const datos = { vencimientos: [], deudas: [], cuentaCorriente: null, comprobantes: null, veps: null, presentaciones: null, notas: {} };
     const contribuyentes = [
       { cuit: '20111111112', nombre: 'CLIENTE ARCA' },
       { cuit: '30222222223', nombre: 'SOCIEDAD REPRESENTADA' },

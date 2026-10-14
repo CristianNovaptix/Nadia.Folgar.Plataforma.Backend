@@ -13,6 +13,7 @@ import { Documento, DocumentoDocument } from './schemas/documento.schema';
 import { Comunicado, ComunicadoDocument } from './schemas/comunicado.schema';
 import { CreateDocumentoDto } from './dto/create-documento.dto';
 import { QueryDocumentoDto } from './dto/query-documento.dto';
+import { UpdateDocumentoDto } from './dto/update-documento.dto';
 import { CreateComunicadoDto } from './dto/create-comunicado.dto';
 import { UpdateComunicadoDto } from './dto/update-comunicado.dto';
 import { QueryComunicadoDto } from './dto/query-comunicado.dto';
@@ -89,6 +90,20 @@ export class PortalClientesService {
       usuarioId,
     );
     await documento.deleteOne();
+  }
+
+  /** Renombrar o reemplazar el contenido — ej. editar un documento creado desde la carpeta del cliente. */
+  async updateDocumento(
+    id: string,
+    dto: UpdateDocumentoDto,
+    estudioId: Types.ObjectId,
+  ): Promise<DocumentoDocument> {
+    const documento = await this.documentoModel.findOne({ _id: id, estudioId }).exec();
+    if (!documento) {
+      throw new NotFoundException('Documento no encontrado');
+    }
+    Object.assign(documento, dto);
+    return documento.save();
   }
 
   async createDocumento(

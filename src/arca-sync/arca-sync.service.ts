@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
@@ -46,7 +46,8 @@ const FILTRO_CON_ARCA = {
 export class ArcaSyncService {
   private readonly logger = new Logger(ArcaSyncService.name);
   /** Clientes con una sincronización en curso, para no abrir dos navegadores contra el mismo. */
-  private readonly enCurso = new Set<string>();
+  /** Sincronizaciones en curso por cliente: un segundo pedido espera la misma en vez de abrir otra. */
+  private readonly enCurso = new Map<string, Promise<ArcaSincronizacionDocument>>();
 
   constructor(
     @InjectModel(Cliente.name) private readonly clienteModel: Model<ClienteDocument>,
@@ -75,9 +76,6 @@ export class ArcaSyncService {
 
   async sincronizarCliente(clienteId: string, estudioId: Types.ObjectId): Promise<ClienteArcaResumen> {
     const cliente = await this.findClienteConArca(clienteId, estudioId);
-    if (this.enCurso.has(clienteId)) {
-      throw new ConflictException('Este cliente ya se está sincronizando con ARCA');
-    }
     const sincronizacion = await this.sincronizar(cliente);
     return this.toResumen(cliente, sincronizacion);
   }
@@ -100,49 +98,53 @@ export class ArcaSyncService {
     this.logger.log(`sincronizarTodos: clientes=${clientes.length} errores=${errores}`);
   }
 
-  private async sincronizar(cliente: ClienteDocument): Promise<ArcaSincronizacionDocument> {
+  private sincronizar(cliente: ClienteDocument): Promise<ArcaSincronizacionDocument> {
+    const id = cliente._id.toString();
+    const enCurso = this.enCurso.get(id);
+    if (enCurso) return enCurso;
+    const sincronizacion = this.sincronizarAhora(cliente).finally(() => this.enCurso.delete(id));
+    this.enCurso.set(id, sincronizacion);
+    return sincronizacion;
+  }
+
+  private async sincronizarAhora(cliente: ClienteDocument): Promise<ArcaSincronizacionDocument> {
     const id = cliente._id.toString();
     const filtro = { estudioId: cliente.estudioId, clienteId: cliente._id };
-    this.enCurso.add(id);
+    await this.sincronizacionModel
+      .updateOne(
+        filtro,
+        { $set: { estado: ArcaSincronizacionEstado.SINCRONIZANDO, ultimoIntento: new Date() } },
+        { upsert: true },
+      )
+      .exec();
+
+    let update: Partial<ArcaSincronizacion>;
     try {
-      await this.sincronizacionModel
-        .updateOne(
-          filtro,
-          { $set: { estado: ArcaSincronizacionEstado.SINCRONIZANDO, ultimoIntento: new Date() } },
-          { upsert: true },
-        )
-        .exec();
-
-      let update: Partial<ArcaSincronizacion>;
-      try {
-        const { contribuyentes, datosPorCuit } = await this.arcaPortal.sincronizar({
-          cuit: cliente.credencialesArca!.usuario!.replace(/\D/g, ''),
-          password: this.secretCipher.decrypt(cliente.credencialesArca!.passwordCifrada!),
-        });
-        update = {
-          estado: ArcaSincronizacionEstado.OK,
-          ultimaSincronizacion: new Date(),
-          ultimoError: undefined,
-          contribuyentes,
-          datosPorCuit,
-        };
-      } catch (error) {
-        const mensaje = error instanceof Error ? error.message : 'error desconocido';
-        this.logger.warn(`No se pudo sincronizar con ARCA el cliente ${id}: ${mensaje}`);
-        update = { estado: ArcaSincronizacionEstado.ERROR, ultimoError: mensaje };
-      }
-
-      const { ultimoError, ...set } = update;
-      return (await this.sincronizacionModel
-        .findOneAndUpdate(
-          filtro,
-          ultimoError ? { $set: { ...set, ultimoError } } : { $set: set, $unset: { ultimoError: 1 } },
-          { new: true, upsert: true },
-        )
-        .exec())!;
-    } finally {
-      this.enCurso.delete(id);
+      const { contribuyentes, datosPorCuit } = await this.arcaPortal.sincronizar({
+        cuit: cliente.credencialesArca!.usuario!.replace(/\D/g, ''),
+        password: this.secretCipher.decrypt(cliente.credencialesArca!.passwordCifrada!),
+      });
+      update = {
+        estado: ArcaSincronizacionEstado.OK,
+        ultimaSincronizacion: new Date(),
+        ultimoError: undefined,
+        contribuyentes,
+        datosPorCuit,
+      };
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : 'error desconocido';
+      this.logger.warn(`No se pudo sincronizar con ARCA el cliente ${id}: ${mensaje}`);
+      update = { estado: ArcaSincronizacionEstado.ERROR, ultimoError: mensaje };
     }
+
+    const { ultimoError, ...set } = update;
+    return (await this.sincronizacionModel
+      .findOneAndUpdate(
+        filtro,
+        ultimoError ? { $set: { ...set, ultimoError } } : { $set: set, $unset: { ultimoError: 1 } },
+        { new: true, upsert: true },
+      )
+      .exec())!;
   }
 
   private async findClienteConArca(clienteId: string, estudioId: Types.ObjectId): Promise<ClienteDocument> {

@@ -33,6 +33,13 @@ export class Reunion {
   @Prop({ default: false, index: true })
   enPapelera: boolean;
 
+  /** Evento creado en el Google Calendar de cada participante con la cuenta sincronizada. */
+  @Prop({
+    type: [{ _id: false, userId: { type: SchemaTypes.ObjectId, ref: 'User' }, eventId: String }],
+    default: [],
+  })
+  googleEventos: Array<{ userId: Types.ObjectId; eventId: string }>;
+
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Estudio', required: true, index: true })
   estudioId: Types.ObjectId;
 }

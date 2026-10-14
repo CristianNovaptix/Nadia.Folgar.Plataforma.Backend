@@ -1,6 +1,6 @@
 import {
-  filasCcmaComoDeudas,
   mapearComprobante,
+  mapearCuentaCorriente,
   mapearDeudas,
   mapearVencimientosCtacte,
   mapearPresentaciones,
@@ -182,32 +182,42 @@ describe('arca-mapeos — cuenta corriente de autónomos/monotributistas (CCMA)'
     ['+', '', periodo, 'AUT', '019', '019', desc, fecha, debe, haber, ''];
   const saldo = (periodo: string, valor: string) => ['-', '', periodo, '', '', '', 'Saldo', '06/10/2026', '', '', valor];
 
-  it('deudas: solo los períodos con saldo deudor, separando capital e intereses', () => {
-    const deudas = mapearDeudas(
-      filasCcmaComoDeudas([
+  it('cuenta corriente: movimientos, saldos por período y totales del resumen', () => {
+    const cc = mapearCuentaCorriente(
+      [
         ['', 'Detalle', 'Período', 'Impuesto', 'Concepto', 'Subcpto', 'Descripción', 'Fecha Movimiento', 'Debe', 'Haber', 'Saldo'],
         fila('10/2026', 'Obligacion Mensual Autonomo.', '10/11/2026', '76,993.48'),
         saldo('10/2026', '(76,993.48)'),
-        fila('03/2026', 'Obligacion Mensual Autonomo.', '08/04/2026', '66,389.76'),
         fila('03/2026', 'Pago Obligacion Mensual Autonomo.', '07/04/2026', '', '66,389.76'),
         saldo('03/2026', '0.00'),
-        fila('02/2026', 'Obligacion Mensual Autonomo.', '09/03/2026', '66,389.76'),
-        fila('02/2026', 'Crédito Reimput Obligacion Mensual Autonomo.', '07/04/2026', '', '66,389.76'),
-        fila('02/2026', 'Intereses Resarcitorios Autonomo', '07/04/2026', '532.66'),
-        saldo('02/2026', '(532.66)'),
-      ]),
-      hoy,
+      ],
+      'ÚLTIMA DEUDA CALCULADA Total Saldo Deudor: 78,744.18 Total Saldo Acreedor: 71,094.32 Obligación Mensual: 76,993.49 Obligación Mensual: 71,047.55 Accesorios: 1,750.69 Accesorios: 46.77 FILTRO AVANZADO',
+      '01/2004',
+      '10/2026',
     );
-    expect(deudas).toHaveLength(2);
-    expect(deudas[0]).toMatchObject({
-      impuesto: 'AUT - Autónomos',
-      concepto: '019 - Obligacion Mensual Autonomo',
-      periodo: '2026-02',
-      saldo: 0,
-      interesesResarcitorios: 532.66,
-      fechaVencimiento: '2026-03-09T03:00:00.000Z',
-      vencida: true,
+    expect(cc).toMatchObject({
+      desde: '2004-01',
+      hasta: '2026-10',
+      saldoDeudor: 78744.18,
+      obligacionDeudor: 76993.49,
+      accesoriosDeudor: 1750.69,
+      saldoAcreedor: 71094.32,
+      obligacionAcreedor: 71047.55,
+      accesoriosAcreedor: 46.77,
     });
-    expect(deudas[1]).toMatchObject({ periodo: '2026-10', saldo: 76993.48, interesesResarcitorios: 0, vencida: false });
+    expect(cc.movimientos).toHaveLength(4);
+    expect(cc.movimientos[0]).toMatchObject({
+      periodo: '2026-10',
+      impuesto: 'AUT',
+      concepto: '019',
+      descripcion: 'Obligacion Mensual Autonomo',
+      fechaMovimiento: '2026-11-10T03:00:00.000Z',
+      debe: 76993.48,
+      haber: undefined,
+      saldo: undefined,
+    });
+    expect(cc.movimientos[1]).toMatchObject({ descripcion: 'Saldo', saldo: -76993.48, debe: undefined });
+    expect(cc.movimientos[2]).toMatchObject({ haber: 66389.76, debe: undefined });
+    expect(cc.movimientos[3]).toMatchObject({ saldo: 0 });
   });
 });

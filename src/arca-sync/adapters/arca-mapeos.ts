@@ -2,7 +2,9 @@ import type {
   ArcaComprobante,
   ArcaPresentacion,
   ArcaVencimiento,
+  ArcaCuentaCorriente,
   ArcaDeuda,
+  ArcaMovimientoCcma,
   ArcaVep,
 } from '../ports/arca-portal.port';
 
@@ -319,57 +321,57 @@ export function mapearDeudas(deudas: Record<string, unknown>[], hoy = new Date()
     .sort((a, b) => (a.fechaVencimiento ?? '').localeCompare(b.fechaVencimiento ?? ''));
 }
 
-const IMPUESTO_CCMA: Record<string, string> = {
-  AUT: 'Autónomos',
-  '020': 'Monotributo impositivo',
-  '021': 'Monotributo SIPA',
-  '024': 'Monotributo obra social',
-};
+/** Importe de CCMA ("76,993.48"; entre paréntesis = negativo). */
+function importeCcma(t: string): number | undefined {
+  if (!t.trim()) return undefined;
+  const n = Number(t.replace(/[(),\s]/g, ''));
+  if (Number.isNaN(n)) return undefined;
+  return t.trim().startsWith('(') ? -n : n;
+}
+
+/** "10/2026" → "2026-10". */
+const periodoCcma = (mmaaaa: string) => `${mmaaaa.slice(3)}-${mmaaaa.slice(0, 2)}`;
 
 /**
- * Tabla de "Cálculo de deuda" de la cuenta corriente de autónomos/monotributistas
- * (CCMA), columnas: [+, Detalle, Período, Impuesto, Concepto, Subcpto, Descripción,
- * Fecha movimiento, Debe, Haber, Saldo]. Cada grupo de movimientos cierra con una
- * fila "Saldo" (negativo entre paréntesis = deuda). Devuelve los grupos con deuda
- * con la misma forma que `getDeudas` de Cuentas Tributarias, para `mapearDeudas`.
+ * "Cálculo de deuda" de la cuenta corriente de autónomos/monotributistas (CCMA).
+ * `filas`: renglones de la tabla, columnas [+, Detalle, Período, Impuesto, Concepto,
+ * Subcpto, Descripción, Fecha movimiento, Debe, Haber, Saldo]; cada período cierra
+ * con un renglón "Saldo" (entre paréntesis = deuda). `resumen`: texto del recuadro
+ * "Última deuda calculada" (totales deudor/acreedor). `desde`/`hasta` en MM/AAAA.
  */
-export function filasCcmaComoDeudas(filas: string[][]): Record<string, unknown>[] {
-  const importe = (t: string) => {
-    const n = Number(t.replace(/[(),\s]/g, ''));
-    return Number.isNaN(n) ? 0 : t.trim().startsWith('(') ? -n : n;
+export function mapearCuentaCorriente(filas: string[][], resumen: string, desde: string, hasta: string): ArcaCuentaCorriente {
+  const valor = (re: RegExp, n = 0) => {
+    const m = [...resumen.matchAll(re)][n];
+    return m ? (importeCcma(m[1]) ?? 0) : 0;
   };
-  const deudas: Record<string, unknown>[] = [];
-  let grupo: string[][] = [];
-  for (const fila of filas) {
-    if (fila.length !== 11 || !/^\d{2}\/\d{4}$/.test(fila[2])) continue;
-    if (fila[6] !== 'Saldo') {
-      grupo.push(fila);
-      continue;
-    }
-    const total = -importe(fila[10]);
-    const movimientos = grupo;
-    grupo = [];
-    if (total <= 0 || !movimientos.length) continue;
-    const obligacion = movimientos.find((m) => m[8] && /^obligacion/i.test(m[6])) ?? movimientos[0];
-    const interesesNetos = movimientos
-      .filter((m) => /intereses/i.test(m[6]))
-      .reduce((t, m) => t + importe(m[8]) - importe(m[9]), 0);
-    const intereses = Math.min(total, Math.max(0, interesesNetos));
-    const [mes, anio] = obligacion[2].split('/');
-    const [d, m, y] = obligacion[7].split('/');
-    deudas.push({
-      impuestoView: `${obligacion[3]}${IMPUESTO_CCMA[obligacion[3]] ? ` - ${IMPUESTO_CCMA[obligacion[3]]}` : ''}`,
-      conceptoView: `${obligacion[4]} - ${obligacion[6].replace(/\.$/, '')}`,
-      subconceptoView: obligacion[5],
-      periodoFiscal: `${anio}${mes}`,
-      anticipocuota: 0,
-      fechaVencimiento: y ? `${y}-${m}-${d}` : undefined,
-      importe: Math.round((total - intereses) * 100) / 100,
-      importeInteresesResarcitorios: Math.round(intereses * 100) / 100,
-      importeInteresesPunitorios: 0,
+  const movimientos: ArcaMovimientoCcma[] = filas
+    .filter((f) => f.length === 11 && /^\d{2}\/\d{4}$/.test(f[2]))
+    .map((f) => {
+      const esSaldo = f[6] === 'Saldo';
+      return {
+        periodo: periodoCcma(f[2]),
+        impuesto: f[3],
+        concepto: f[4],
+        subconcepto: f[5],
+        descripcion: f[6].replace(/\.$/, ''),
+        fechaMovimiento: /^\d{2}\/\d{2}\/\d{4}$/.test(f[7]) ? fechaDdMmYyyy(f[7]) : undefined,
+        debe: esSaldo ? undefined : importeCcma(f[8]),
+        haber: esSaldo ? undefined : importeCcma(f[9]),
+        saldo: esSaldo ? importeCcma(f[10]) : undefined,
+      };
     });
-  }
-  return deudas;
+  const importe = /:\s*([\d.,()]+)/.source;
+  return {
+    desde: periodoCcma(desde),
+    hasta: periodoCcma(hasta),
+    saldoDeudor: valor(new RegExp(`Total Saldo Deudor${importe}`, 'g')),
+    obligacionDeudor: valor(new RegExp(`Obligación Mensual${importe}`, 'g'), 0),
+    accesoriosDeudor: valor(new RegExp(`Accesorios${importe}`, 'g'), 0),
+    saldoAcreedor: valor(new RegExp(`Total Saldo Acreedor${importe}`, 'g')),
+    obligacionAcreedor: valor(new RegExp(`Obligación Mensual${importe}`, 'g'), 1),
+    accesoriosAcreedor: valor(new RegExp(`Accesorios${importe}`, 'g'), 1),
+    movimientos,
+  };
 }
 
 /**

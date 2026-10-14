@@ -76,11 +76,39 @@ export interface ArcaDeuda {
   vencida: boolean;
 }
 
-export type ArcaBloque = 'vencimientos' | 'deudas' | 'comprobantes' | 'veps' | 'presentaciones';
+/** Un renglón de la cuenta corriente de autónomos/monotributistas (CCMA), tal como lo muestra ARCA. */
+export interface ArcaMovimientoCcma {
+  periodo: string; // AAAA-MM
+  impuesto: string;
+  concepto: string;
+  subconcepto: string;
+  descripcion: string;
+  fechaMovimiento?: string; // ISO
+  debe?: number;
+  haber?: number;
+  /** Solo en el renglón "Saldo" que cierra cada período (negativo = deuda). */
+  saldo?: number;
+}
+
+/** "Cálculo de deuda" de la cuenta corriente (CCMA): totales y movimientos desde `desde`. */
+export interface ArcaCuentaCorriente {
+  desde: string; // AAAA-MM
+  hasta: string; // AAAA-MM
+  saldoDeudor: number;
+  obligacionDeudor: number;
+  accesoriosDeudor: number;
+  saldoAcreedor: number;
+  obligacionAcreedor: number;
+  accesoriosAcreedor: number;
+  movimientos: ArcaMovimientoCcma[];
+}
+
+export type ArcaBloque = 'vencimientos' | 'deudas' | 'cuentaCorriente' | 'comprobantes' | 'veps' | 'presentaciones';
 
 export interface ArcaDatos {
   vencimientos: ArcaVencimiento[] | null;
   deudas: ArcaDeuda[] | null;
+  cuentaCorriente: ArcaCuentaCorriente | null;
   comprobantes: ArcaComprobante[] | null;
   veps: ArcaVep[] | null;
   presentaciones: ArcaPresentacion[] | null;
@@ -91,6 +119,7 @@ export interface ArcaDatos {
 export const ARCA_DATOS_VACIOS: ArcaDatos = {
   vencimientos: null,
   deudas: null,
+  cuentaCorriente: null,
   comprobantes: null,
   veps: null,
   presentaciones: null,

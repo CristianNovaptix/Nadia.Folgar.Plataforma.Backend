@@ -5,12 +5,14 @@ import { ImporteManualMes, ImporteManualMesSchema } from './schemas/importe-manu
 import { Reunion, ReunionSchema } from './schemas/reunion.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { ClientesModule } from '../clientes/clientes.module';
+import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 import { InicioService } from './inicio.service';
 import { InicioController } from './inicio.controller';
 
 @Module({
   imports: [
     ClientesModule,
+    GoogleCalendarModule,
     MongooseModule.forFeature([
       { name: GastoMensual.name, schema: GastoMensualSchema },
       { name: ImporteManualMes.name, schema: ImporteManualMesSchema },
