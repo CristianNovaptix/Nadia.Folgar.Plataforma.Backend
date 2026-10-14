@@ -48,9 +48,13 @@ export class PortalClientesService {
     const limit = query.limit ?? 10;
     const estudioId = new Types.ObjectId(user.estudioId);
 
-    const filter: FilterQuery<DocumentoDocument> = { estudioId };
+    const esCliente = user.roles.includes('cliente');
+    const filter: FilterQuery<DocumentoDocument> = {
+      estudioId,
+      enPapelera: query.papelera === 'true' && !esCliente ? true : { $ne: true },
+    };
 
-    if (user.roles.includes('cliente')) {
+    if (esCliente) {
       if (!user.clienteId) {
         // Usuario rol cliente sin clienteId asociado en el JWT: no tiene
         // ningún cliente del estudio que representar, no ve nada.
@@ -66,7 +70,7 @@ export class PortalClientesService {
 
     const [data, total] = await Promise.all([
       this.documentoModel
-        .find(filter)
+        .find(filter, query.sinContenido === 'true' ? { contenidoBase64: 0 } : undefined)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -75,6 +79,22 @@ export class PortalClientesService {
     ]);
 
     return { data, total, page, limit };
+  }
+
+  /** Un documento con su contenido, con el mismo scoping que el listado. */
+  async findDocumentoParaUsuario(id: string, user: AuthenticatedUser): Promise<DocumentoDocument> {
+    const filter: FilterQuery<DocumentoDocument> = {
+      _id: id,
+      estudioId: new Types.ObjectId(user.estudioId),
+    };
+    if (user.roles.includes('cliente')) {
+      if (!user.clienteId) throw new NotFoundException('Documento no encontrado');
+      filter.clienteId = new Types.ObjectId(user.clienteId);
+      filter.enPapelera = { $ne: true };
+    }
+    const documento = await this.documentoModel.findOne(filter).exec();
+    if (!documento) throw new NotFoundException('Documento no encontrado');
+    return documento;
   }
 
   async removeDocumento(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
@@ -97,10 +117,22 @@ export class PortalClientesService {
     id: string,
     dto: UpdateDocumentoDto,
     estudioId: Types.ObjectId,
+    usuarioId?: string,
   ): Promise<DocumentoDocument> {
     const documento = await this.documentoModel.findOne({ _id: id, estudioId }).exec();
     if (!documento) {
       throw new NotFoundException('Documento no encontrado');
+    }
+    if (dto.enPapelera !== undefined && Boolean(documento.enPapelera) !== dto.enPapelera) {
+      await this.historial.registrarCambioDeOrigen(
+        documento.clienteId,
+        estudioId,
+        dto.enPapelera ? TIPO_EVENTO.REGISTRO_PAPELERA : TIPO_EVENTO.REGISTRO_RESTAURADO,
+        dto.enPapelera
+          ? `Se mandó a la papelera el documento "${documento.nombre}"`
+          : `Se restauró el documento "${documento.nombre}"`,
+        usuarioId,
+      );
     }
     Object.assign(documento, dto);
     return documento.save();

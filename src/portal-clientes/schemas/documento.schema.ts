@@ -39,6 +39,10 @@ export class Documento {
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Estudio', required: true, index: true })
   estudioId: Types.ObjectId;
+
+  /** Papelera de "Documentación" del cliente: no se borra hasta eliminarlo definitivamente. */
+  @Prop({ default: false, index: true })
+  enPapelera: boolean;
 }
 
 export const DocumentoSchema = SchemaFactory.createForClass(Documento);

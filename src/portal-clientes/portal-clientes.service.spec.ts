@@ -94,6 +94,7 @@ describe('PortalClientesService', () => {
 
       expect(documentoModelMock.find).toHaveBeenCalledWith(
         expect.objectContaining({ estudioId, clienteId: new Types.ObjectId(clienteIdQuery) }),
+        undefined,
       );
     });
 
@@ -104,7 +105,19 @@ describe('PortalClientesService', () => {
       await service.findDocumentosParaUsuario({}, adminUser);
 
       const filterUsed = documentoModelMock.find.mock.calls[0][0];
-      expect(filterUsed).toEqual({ estudioId });
+      expect(filterUsed).toEqual({ estudioId, enPapelera: { $ne: true } });
+    });
+
+    it('papelera=true lista solo lo que está en la papelera, sinContenido no trae el base64', async () => {
+      documentoModelMock.find.mockReturnValue(chainable([]));
+      documentoModelMock.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(0) });
+
+      await service.findDocumentosParaUsuario({ papelera: 'true', sinContenido: 'true' }, adminUser);
+
+      expect(documentoModelMock.find).toHaveBeenCalledWith(
+        { estudioId, enPapelera: true },
+        { contenidoBase64: 0 },
+      );
     });
 
     it('CRÍTICO: un usuario rol cliente IGNORA el clienteId del query y solo ve lo propio', async () => {

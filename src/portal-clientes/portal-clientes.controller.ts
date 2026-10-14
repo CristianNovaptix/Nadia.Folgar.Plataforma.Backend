@@ -49,6 +49,12 @@ export class PortalClientesController {
     return this.portalClientesService.findDocumentosParaUsuario(query, user);
   }
 
+  @Get('documentos/:id')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  findOneDocumento(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.portalClientesService.findDocumentoParaUsuario(id, user);
+  }
+
   @Post('documentos')
   @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_WRITE)
   createDocumento(@Body() dto: CreateDocumentoDto, @CurrentUser() user: AuthenticatedUser) {
@@ -62,7 +68,12 @@ export class PortalClientesController {
     @Body() dto: UpdateDocumentoDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.portalClientesService.updateDocumento(id, dto, new Types.ObjectId(user.estudioId));
+    return this.portalClientesService.updateDocumento(
+      id,
+      dto,
+      new Types.ObjectId(user.estudioId),
+      user.userId,
+    );
   }
 
   @Delete('documentos/:id')
