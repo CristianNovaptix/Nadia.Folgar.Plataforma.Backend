@@ -43,6 +43,10 @@ export class Documento {
   /** Papelera de "Documentación" del cliente: no se borra hasta eliminarlo definitivamente. */
   @Prop({ default: false, index: true })
   enPapelera: boolean;
+
+  /** Carpeta de la documentación del cliente (`CarpetaDocumento`); null = raíz. */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'CarpetaDocumento', default: null, index: true })
+  carpetaId: Types.ObjectId | null;
 }
 
 export const DocumentoSchema = SchemaFactory.createForClass(Documento);

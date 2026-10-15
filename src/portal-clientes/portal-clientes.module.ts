@@ -7,6 +7,8 @@ import { EmailAdapter } from '../notificaciones/adapters/email.adapter';
 import { Documento, DocumentoSchema } from './schemas/documento.schema';
 import { Comunicado, ComunicadoSchema } from './schemas/comunicado.schema';
 import { PortalClientesService } from './portal-clientes.service';
+import { CarpetasDocumentosService } from './carpetas-documentos.service';
+import { CarpetaDocumento, CarpetaDocumentoSchema } from './schemas/carpeta-documento.schema';
 import { PortalClientesController } from './portal-clientes.controller';
 
 /**
@@ -31,10 +33,15 @@ import { PortalClientesController } from './portal-clientes.controller';
       { name: Documento.name, schema: DocumentoSchema },
       { name: Comunicado.name, schema: ComunicadoSchema },
       { name: Cliente.name, schema: ClienteSchema },
+      { name: CarpetaDocumento.name, schema: CarpetaDocumentoSchema },
     ]),
   ],
   controllers: [PortalClientesController],
-  providers: [PortalClientesService, { provide: MESSAGING_PROVIDER, useClass: EmailAdapter }],
+  providers: [
+    PortalClientesService,
+    CarpetasDocumentosService,
+    { provide: MESSAGING_PROVIDER, useClass: EmailAdapter },
+  ],
   exports: [PortalClientesService],
 })
 export class PortalClientesModule {}

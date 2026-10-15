@@ -112,7 +112,10 @@ describe('PortalClientesService', () => {
       documentoModelMock.find.mockReturnValue(chainable([]));
       documentoModelMock.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(0) });
 
-      await service.findDocumentosParaUsuario({ papelera: 'true', sinContenido: 'true' }, adminUser);
+      await service.findDocumentosParaUsuario(
+        { papelera: 'true', sinContenido: 'true' },
+        adminUser,
+      );
 
       expect(documentoModelMock.find).toHaveBeenCalledWith(
         { estudioId, enPapelera: true },
@@ -200,6 +203,26 @@ describe('PortalClientesService', () => {
 
       await expect(service.createDocumento(dto, estudioId)).resolves.toBeDefined();
       expect(messagingProviderMock.sendMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('vaciarPapelera', () => {
+    it('borra toda la papelera del cliente de una sola vez, sin bajar el contenido', async () => {
+      const clienteId = new Types.ObjectId().toString();
+      documentoModelMock.find.mockReturnValue({
+        lean: () => ({ exec: jest.fn().mockResolvedValue([{ nombre: 'a.pdf' }, { nombre: 'b.png' }]) }),
+      });
+      documentoModelMock.deleteMany = jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue({ deletedCount: 2 }),
+      });
+
+      const resultado = await service.vaciarPapelera(clienteId, estudioId, 'admin-1');
+
+      const filtro = { clienteId: new Types.ObjectId(clienteId), estudioId, enPapelera: true };
+      expect(documentoModelMock.find).toHaveBeenCalledWith(filtro, { nombre: 1 });
+      expect(documentoModelMock.deleteMany).toHaveBeenCalledTimes(1);
+      expect(documentoModelMock.deleteMany).toHaveBeenCalledWith(filtro);
+      expect(resultado).toEqual({ eliminados: 2 });
     });
   });
 

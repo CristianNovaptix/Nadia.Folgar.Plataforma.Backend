@@ -1,4 +1,13 @@
-import { IsInt, IsMongoId, IsNotEmpty, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsMongoId,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 /**
  * Tope de tamaño del archivo ORIGINAL (antes de codificar en base64) que se
@@ -19,6 +28,11 @@ const MAX_BASE64_LENGTH = Math.ceil(MAX_DOCUMENTO_BYTES / 3) * 4 + 1024;
 export class CreateDocumentoDto {
   @IsMongoId()
   clienteId: string;
+
+  /** Carpeta donde se guarda (`CarpetaDocumento`); sin valor = raíz del cliente. */
+  @IsOptional()
+  @IsMongoId()
+  carpetaId?: string | null;
 
   @IsString()
   @IsNotEmpty()

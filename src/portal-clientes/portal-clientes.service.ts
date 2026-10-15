@@ -98,7 +98,10 @@ export class PortalClientesService {
   }
 
   async removeDocumento(id: string, estudioId: Types.ObjectId, usuarioId?: string): Promise<void> {
-    const documento = await this.documentoModel.findOne({ _id: id, estudioId }).exec();
+    // Sin el contenido: para borrar no hace falta bajar el archivo (puede pesar varios MB).
+    const documento = await this.documentoModel
+      .findOne({ _id: id, estudioId }, { nombre: 1, clienteId: 1 })
+      .exec();
     if (!documento) {
       throw new NotFoundException('Documento no encontrado');
     }
@@ -110,6 +113,34 @@ export class PortalClientesService {
       usuarioId,
     );
     await documento.deleteOne();
+  }
+
+  /**
+   * "Eliminar todos" de la papelera de documentos de un cliente, de una sola vez:
+   * antes la pantalla los borraba de a uno y cada borrado bajaba el archivo
+   * entero y repasaba el historial del cliente — con varios archivos tardaba
+   * muchísimo. Queda un único registro en el historial con los nombres.
+   */
+  async vaciarPapelera(
+    clienteId: string,
+    estudioId: Types.ObjectId,
+    usuarioId?: string,
+  ): Promise<{ eliminados: number }> {
+    const filtro = { clienteId: new Types.ObjectId(clienteId), estudioId, enPapelera: true };
+    const documentos = await this.documentoModel.find(filtro, { nombre: 1 }).lean().exec();
+    if (documentos.length === 0) return { eliminados: 0 };
+    const nombres = documentos.map((d) => `"${d.nombre}"`).join(', ');
+    await this.historial.registrarCambioDeOrigen(
+      clienteId,
+      estudioId,
+      TIPO_EVENTO.REGISTRO_ELIMINADO,
+      documentos.length === 1
+        ? `Se eliminó el documento ${nombres}`
+        : `Se eliminaron ${documentos.length} documentos de la papelera: ${nombres}`,
+      usuarioId,
+    );
+    const { deletedCount } = await this.documentoModel.deleteMany(filtro).exec();
+    return { eliminados: deletedCount };
   }
 
   /** Renombrar o reemplazar el contenido — ej. editar un documento creado desde la carpeta del cliente. */
@@ -154,6 +185,7 @@ export class PortalClientesService {
       contenidoBase64: dto.contenidoBase64,
       tamanioBytes: dto.tamanioBytes,
       clienteId: clienteObjectId,
+      carpetaId: dto.carpetaId ?? null,
       estudioId,
     });
 
