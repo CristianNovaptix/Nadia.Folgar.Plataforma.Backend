@@ -1,17 +1,26 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron } from '@nestjs/schedule';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { SecretCipherService } from '../common/crypto/secret-cipher.service';
 import { Reunion, ReunionDocument } from '../inicio/schemas/reunion.schema';
-import { GoogleCalendarCuenta } from './schemas/google-calendar-cuenta.schema';
+import { GoogleCalendarCuenta, GoogleCalendarCuentaDocument } from './schemas/google-calendar-cuenta.schema';
 
 const SCOPES = 'openid email https://www.googleapis.com/auth/calendar.events';
 const ZONA_HORARIA = 'America/Argentina/Buenos_Aires';
 /** `Reunion` no tiene hora de fin: el evento de Google dura una hora. */
 const DURACION_MS = 60 * 60 * 1000;
 const EVENTOS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+
+interface EventoGoogle {
+  id: string;
+  status?: string;
+  summary?: string;
+  location?: string;
+  start?: { dateTime?: string; date?: string };
+}
 
 export interface EstadoGoogleCalendar {
   configurado: boolean;
@@ -25,11 +34,16 @@ export interface EstadoGoogleCalendar {
  * editar, mandar a la papelera o eliminar una reunión se replica en el
  * calendario de su creador y de sus miembros que tengan la cuenta conectada.
  * Nunca rompe el guardado de la reunión: si Google falla, solo se loguea.
+ * Es bidireccional: cada 2 minutos lee los cambios del calendario de cada
+ * cuenta (sync incremental con `syncToken`) y, si el evento de una reunión se
+ * movió, renombró o borró en Google, lo refleja en la plataforma. Solo mira los
+ * eventos que creó la plataforma; el resto del calendario se ignora.
  * Usa las mismas credenciales OAuth de Google que el login social.
  */
 @Injectable()
 export class GoogleCalendarService {
   private readonly logger = new Logger(GoogleCalendarService.name);
+  private sincronizandoDesdeGoogle = false;
 
   constructor(
     @InjectModel(GoogleCalendarCuenta.name)
@@ -116,7 +130,10 @@ export class GoogleCalendarService {
       const userId = new Types.ObjectId(payload.sub);
       await this.cuentaModel.findOneAndUpdate(
         { userId },
-        { userId, email: email ?? 'Cuenta de Google', refreshTokenCifrado: this.cipher.encrypt(token.refresh_token) },
+        {
+          $set: { userId, email: email ?? 'Cuenta de Google', refreshTokenCifrado: this.cipher.encrypt(token.refresh_token) },
+          $unset: { syncToken: 1 },
+        },
         { upsert: true },
       );
       await this.sincronizarProximas(payload.sub, payload.estudioId);
@@ -207,6 +224,104 @@ export class GoogleCalendarService {
     } catch (err) {
       this.logger.warn(`No se pudo quitar la reunión de Google Calendar: ${(err as Error).message}`);
     }
+  }
+
+  /** Google → plataforma: aplica los cambios hechos en Google Calendar a las reuniones. */
+  @Cron('*/2 * * * *')
+  async sincronizarDesdeGoogle(): Promise<void> {
+    if (!this.oauth || this.sincronizandoDesdeGoogle) return;
+    this.sincronizandoDesdeGoogle = true;
+    try {
+      const cuentas = await this.cuentaModel.find().exec();
+      for (const cuenta of cuentas) await this.sincronizarCuentaDesdeGoogle(cuenta);
+    } finally {
+      this.sincronizandoDesdeGoogle = false;
+    }
+  }
+
+  async sincronizarCuentaDesdeGoogle(cuenta: GoogleCalendarCuentaDocument): Promise<void> {
+    try {
+      const accessToken = await this.accessToken(cuenta.refreshTokenCifrado);
+      if (!accessToken) return;
+
+      const eventos: EventoGoogle[] = [];
+      let pageToken: string | undefined;
+      let nextSyncToken: string | undefined;
+      do {
+        const params = new URLSearchParams({ showDeleted: 'true', maxResults: '2500' });
+        if (cuenta.syncToken) params.set('syncToken', cuenta.syncToken);
+        if (pageToken) params.set('pageToken', pageToken);
+        const res = await fetch(`${EVENTOS_URL}?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (res.status === 410) {
+          // Google invalidó el token: se rehace la sincronización completa en la próxima vuelta.
+          await this.cuentaModel.updateOne({ _id: cuenta._id }, { $unset: { syncToken: 1 } }).exec();
+          return;
+        }
+        if (!res.ok) {
+          this.logger.warn(`Google Calendar respondió ${res.status} al leer cambios`);
+          return;
+        }
+        const data = (await res.json()) as { items?: EventoGoogle[]; nextPageToken?: string; nextSyncToken?: string };
+        eventos.push(...(data.items ?? []));
+        pageToken = data.nextPageToken;
+        nextSyncToken = data.nextSyncToken;
+      } while (pageToken);
+
+      // La primera lectura solo toma el punto de partida: no hay cambios previos que aplicar.
+      if (cuenta.syncToken) {
+        for (const evento of eventos) await this.aplicarCambioDeGoogle(cuenta.userId, evento);
+      }
+      if (nextSyncToken) {
+        await this.cuentaModel.updateOne({ _id: cuenta._id }, { $set: { syncToken: nextSyncToken } }).exec();
+      }
+    } catch (err) {
+      this.logger.warn(`No se pudieron leer los cambios de Google Calendar: ${(err as Error).message}`);
+    }
+  }
+
+  private async aplicarCambioDeGoogle(userId: Types.ObjectId, evento: EventoGoogle): Promise<void> {
+    const reunion = await this.reunionModel
+      .findOne({ googleEventos: { $elemMatch: { userId, eventId: evento.id } } })
+      .exec();
+    if (!reunion || reunion.enPapelera) return;
+
+    if (evento.status === 'cancelled') {
+      if (reunion.creadoPor?.equals(userId)) {
+        // Lo borró quien la creó: va a la papelera (se puede restaurar desde la plataforma).
+        reunion.enPapelera = true;
+      } else {
+        // Lo borró un invitado: deja de participar.
+        reunion.miembros = reunion.miembros.filter((m) => !m.equals(userId));
+      }
+      reunion.googleEventos = reunion.googleEventos.filter((e) => !(e.userId.equals(userId) && e.eventId === evento.id));
+      await reunion.save();
+      await this.sincronizarReunion(reunion._id);
+      return;
+    }
+
+    let cambio = false;
+    const titulo = evento.summary?.trim();
+    if (titulo && titulo !== reunion.titulo) {
+      reunion.titulo = titulo;
+      cambio = true;
+    }
+    // Los eventos de todo el día no tienen hora: se deja la de la reunión.
+    const fecha = evento.start?.dateTime ? new Date(evento.start.dateTime) : undefined;
+    if (fecha && !Number.isNaN(fecha.getTime()) && fecha.getTime() !== new Date(reunion.fecha).getTime()) {
+      reunion.fecha = fecha;
+      cambio = true;
+    }
+    const enlace = evento.location?.trim() || undefined;
+    if (enlace !== (reunion.enlace || undefined)) {
+      reunion.enlace = enlace;
+      cambio = true;
+    }
+    if (!cambio) return;
+    await reunion.save();
+    // Replica el cambio en el calendario del resto de los participantes.
+    await this.sincronizarReunion(reunion._id);
   }
 
   /** Al conectar la cuenta: sube las reuniones futuras que ya ve ese usuario. */

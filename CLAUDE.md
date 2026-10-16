@@ -242,3 +242,13 @@ shape `{statusCode,message,error,timestamp,path}` → 401 sin token).
   `users.service.spec.ts` (`toSummary` expone ambos campos, default `[]`). Ver el
   CLAUDE.md del Frontend (fila "Autenticación, usuarios y roles") para el detalle de
   la UI (`PermisosExcepcionesEditor.tsx`, dentro de `UsuarioFormDialog` solo al editar).
+- **15-10-2026 — Google Calendar bidireccional**: además de plataforma → Google (ya existía),
+  `GoogleCalendarService.sincronizarDesdeGoogle` (`@Cron` cada 2 min) lee los cambios del
+  calendario de cada cuenta conectada con sync incremental (`GoogleCalendarCuenta.syncToken`,
+  se resetea al reconectar o si Google responde 410). Solo mira eventos que creó la plataforma
+  (`Reunion.googleEventos`): título/hora/ubicación cambiados en Google actualizan la reunión y se
+  replican al resto de los participantes; si quien la creó borra el evento, la reunión va a la
+  papelera; si lo borra un invitado, deja de ser miembro. Esos movimientos no quedan en el
+  historial del cliente (el módulo no depende de `inicio`). Credenciales OAuth: proyecto GCP
+  `folgar-gestion` (org Novaptix), mismas variables `GOOGLE_OAUTH_*` que el login social.
+  Cubierto en `google-calendar.service.spec.ts`.

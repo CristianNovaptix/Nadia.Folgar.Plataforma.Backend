@@ -21,6 +21,10 @@ export class GoogleCalendarCuenta {
   /** Refresh token de Google, cifrado con `SecretCipherService`. */
   @Prop({ required: true })
   refreshTokenCifrado: string;
+
+  /** `nextSyncToken` de Google: desde dónde leer los cambios hechos en su calendario. */
+  @Prop()
+  syncToken?: string;
 }
 
 export const GoogleCalendarCuentaSchema = SchemaFactory.createForClass(GoogleCalendarCuenta);
