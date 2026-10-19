@@ -1,4 +1,5 @@
 import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
+import { conDesempatePorId } from '../common/utils/orden-estable';
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
@@ -106,7 +107,7 @@ export class NotificacionesService {
     const [data, total] = await Promise.all([
       this.vencimientoModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),
@@ -193,7 +194,7 @@ export class NotificacionesService {
     const [data, total] = await Promise.all([
       this.reglaModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),
@@ -268,7 +269,7 @@ export class NotificacionesService {
     const [data, total] = await Promise.all([
       this.notificacionEnviadaModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),

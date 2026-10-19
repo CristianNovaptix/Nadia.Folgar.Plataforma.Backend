@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { conDesempatePorId } from '../common/utils/orden-estable';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { CuentaContable, CuentaContableDocument } from './schemas/cuenta-contable.schema';
@@ -36,7 +37,7 @@ export class PlanCuentasService {
     const [data, total] = await Promise.all([
       this.cuentaContableModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),

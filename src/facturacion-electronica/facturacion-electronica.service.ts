@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { conDesempatePorId } from '../common/utils/orden-estable';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import { Cliente, ClienteDocument } from '../clientes/schemas/cliente.schema';
@@ -40,7 +41,7 @@ export class FacturacionElectronicaService {
     const [data, total] = await Promise.all([
       this.facturaModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         .populate('clienteId', 'nombre cuit')

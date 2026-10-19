@@ -71,7 +71,7 @@ export class PortalClientesService {
     const [data, total] = await Promise.all([
       this.documentoModel
         .find(filter, query.sinContenido === 'true' ? { contenidoBase64: 0 } : undefined)
-        .sort({ createdAt: -1 })
+        .sort({ createdAt: -1, _id: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),
@@ -239,7 +239,7 @@ export class PortalClientesService {
     const [data, total] = await Promise.all([
       this.comunicadoModel
         .find(filter)
-        .sort({ createdAt: -1 })
+        .sort({ createdAt: -1, _id: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),

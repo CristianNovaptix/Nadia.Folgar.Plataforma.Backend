@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { conDesempatePorId } from '../common/utils/orden-estable';
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import * as argon2 from 'argon2';
@@ -229,7 +230,7 @@ export class ClientesService {
     const [data, total] = await Promise.all([
       this.clienteModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         // "Personal" (Frontend) muestra los responsables con nombre/email

@@ -1,4 +1,5 @@
 import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
+import { conDesempatePorId } from '../common/utils/orden-estable';
 import {
   BadRequestException,
   Inject,
@@ -193,7 +194,7 @@ export class ExtractosIaService {
     const [data, total] = await Promise.all([
       this.extractoModel
         .find(filter)
-        .sort(sort)
+        .sort(conDesempatePorId(sort))
         .skip((page - 1) * limit)
         .limit(limit)
         .exec(),
