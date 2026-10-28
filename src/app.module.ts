@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { Connection } from 'mongoose';
+import { registroPruebaPlugin } from './common/database/registro-prueba';
+import { RegistroPruebaInterceptor } from './common/interceptors/registro-prueba.interceptor';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -84,6 +87,10 @@ const queueImports = useRedisQueues()
         uri: configService.get<string>('MONGODB_URI'),
         serverSelectionTimeoutMS: 10000,
         connectTimeoutMS: 10000,
+        connectionFactory: (connection: Connection) => {
+          connection.plugin(registroPruebaPlugin);
+          return connection;
+        },
       }),
     }),
     ...queueImports,
@@ -129,6 +136,7 @@ const queueImports = useRedisQueues()
   providers: [
     { provide: APP_FILTER, useClass: GlobalHttpExceptionFilter },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_INTERCEPTOR, useClass: RegistroPruebaInterceptor },
   ],
 })
 export class AppModule {}

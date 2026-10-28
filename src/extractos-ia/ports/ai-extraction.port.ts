@@ -108,6 +108,18 @@ export interface AiExtractionInput {
   cuentasContablesDisponibles?: CuentaContableDisponible[];
   /** Reglas ya activas del cliente/cuenta bancaria — para que la IA no repita sugerencias. */
   reglasExistentes?: ReglaExistenteResumen[];
+  /**
+   * Presente solo cuando el extracto es largo y se procesa por partes (ver
+   * `extraccion-por-tramos.ts`): `texto` es solo esta parte.
+   */
+  tramo?: TramoExtracto;
+}
+
+export interface TramoExtracto {
+  numero: number;
+  total: number;
+  /** Comienzo de la parte siguiente, solo para completar el último movimiento si quedó cortado. */
+  continuacion?: string;
 }
 
 /**

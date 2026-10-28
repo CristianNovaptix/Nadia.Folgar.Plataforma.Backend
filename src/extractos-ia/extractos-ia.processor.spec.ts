@@ -172,6 +172,151 @@ describe('ExtractosIaProcessor', () => {
     );
   });
 
+  /* eslint-disable @typescript-eslint/no-unsafe-return -- mocks tipados como any, igual que el resto del archivo */
+  describe('extracto largo (por partes)', () => {
+    // 3 páginas de 20.000 caracteres: supera el umbral de una sola llamada y queda en 3 partes.
+    const paginas = ['A'.repeat(20000), 'B'.repeat(20000), 'C'.repeat(20000)];
+    const mov = (concepto: string, monto: number, saldoDespues: number) => ({
+      fecha: '01/08/25',
+      concepto,
+      monto,
+      tipo: 'credito',
+      saldoDespues,
+    });
+    const respuestaPorParte = (input: any) => {
+      const letra = input.texto[0];
+      if (letra === 'A') {
+        return {
+          exitoso: true,
+          saldoInicialDeclarado: 100,
+          movimientos: [mov('m1', 10, 110), mov('m2', 10, 120)],
+          reglasSugeridas: [],
+        };
+      }
+      if (letra === 'B') {
+        return { exitoso: true, movimientos: [mov('m3', 10, 130)], reglasSugeridas: [] };
+      }
+      return {
+        exitoso: true,
+        saldoFinalDeclarado: 140,
+        movimientos: [mov('m4', 10, 140)],
+        reglasSugeridas: [],
+      };
+    };
+
+    beforeEach(() => {
+      extractoModelMock.findById.mockReturnValue({
+        exec: jest.fn(() => Promise.resolve(buildExtractoInstanceRef.current)),
+      });
+      pdfTextExtractorMock.extraer.mockResolvedValue({
+        texto: paginas.join('\n\n'),
+        tieneCapaDeTexto: true,
+        paginas,
+      });
+    });
+
+    const buildExtractoInstanceRef: { current: any } = { current: null };
+
+    it('manda cada parte por separado y junta todos los movimientos en orden', async () => {
+      buildExtractoInstanceRef.current = buildExtractoInstance();
+      fakePort.extraerMovimientos.mockImplementation((input: any) =>
+        Promise.resolve(respuestaPorParte(input)),
+      );
+
+      await processor.process(buildJob());
+
+      const instance = buildExtractoInstanceRef.current;
+      expect(fakePort.extraerMovimientos).toHaveBeenCalledTimes(3);
+      const tramos = fakePort.extraerMovimientos.mock.calls.map((c: any[]) => c[0].tramo);
+      expect(tramos.map((t: any) => `${t.numero}/${t.total}`).sort()).toEqual([
+        '1/3',
+        '2/3',
+        '3/3',
+      ]);
+      expect(instance.movimientos.map((m: any) => m.concepto)).toEqual(['m1', 'm2', 'm3', 'm4']);
+      expect(instance.saldoInicialDeclarado).toBe(100);
+      expect(instance.saldoFinalDeclarado).toBe(140);
+      expect(instance.estado).toBe(EstadoExtracto.PROCESADO);
+    });
+
+    it('si una parte tiene diferencia de saldo, reintenta solo esa parte', async () => {
+      buildExtractoInstanceRef.current = buildExtractoInstance();
+      fakePort.extraerMovimientos.mockImplementation((input: any) => {
+        if (input.texto[0] === 'B' && !input.pistaRevision) {
+          return Promise.resolve({
+            exitoso: true,
+            movimientos: [mov('m3', 99, 130)],
+            reglasSugeridas: [],
+          });
+        }
+        return Promise.resolve(respuestaPorParte(input));
+      });
+
+      await processor.process(buildJob());
+
+      const instance = buildExtractoInstanceRef.current;
+      const reintentos = fakePort.extraerMovimientos.mock.calls.filter(
+        (c: any[]) => c[0].pistaRevision,
+      );
+      expect(reintentos).toHaveLength(1);
+      expect(reintentos[0][0].tramo.numero).toBe(2);
+      expect(instance.movimientos.map((m: any) => m.monto)).toEqual([10, 10, 10, 10]);
+      expect(instance.estado).toBe(EstadoExtracto.PROCESADO);
+    });
+
+    it('si una parte falla dos veces, el extracto queda en error indicando cuál', async () => {
+      buildExtractoInstanceRef.current = buildExtractoInstance();
+      fakePort.extraerMovimientos.mockImplementation((input: any) =>
+        input.texto[0] === 'C'
+          ? Promise.resolve({ exitoso: false, movimientos: [], reglasSugeridas: [], mensaje: 'x' })
+          : Promise.resolve(respuestaPorParte(input)),
+      );
+
+      await processor.process(buildJob());
+
+      const instance = buildExtractoInstanceRef.current;
+      expect(instance.estado).toBe(EstadoExtracto.ERROR);
+      expect(instance.mensajeError).toBe('No se pudo procesar la parte 3 de 3 del extracto: x');
+    });
+
+    it('un extracto que entra en una llamada pero cuya respuesta se corta por largo se reintenta por partes', async () => {
+      buildExtractoInstanceRef.current = buildExtractoInstance();
+      const medianas = ['A'.repeat(15000), 'C'.repeat(15000)];
+      pdfTextExtractorMock.extraer.mockResolvedValue({
+        texto: medianas.join('\n\n'),
+        tieneCapaDeTexto: true,
+        paginas: medianas,
+      });
+      fakePort.extraerMovimientos.mockImplementation((input: any) =>
+        Promise.resolve(
+          input.tramo
+            ? respuestaPorParte(input)
+            : {
+                exitoso: false,
+                movimientos: [],
+                reglasSugeridas: [],
+                mensaje: 'Could not parse response content as the length limit was reached',
+              },
+        ),
+      );
+
+      await processor.process(buildJob());
+
+      const instance = buildExtractoInstanceRef.current;
+      const llamadas = fakePort.extraerMovimientos.mock.calls.map((c: any[]) => c[0]);
+      expect(llamadas[0].tramo).toBeUndefined();
+      expect(
+        llamadas
+          .slice(1, 3)
+          .map((input: any) => `${input.tramo.numero}/${input.tramo.total}`)
+          .sort(),
+      ).toEqual(['1/2', '2/2']);
+      expect(instance.movimientos.map((m: any) => m.concepto)).toEqual(['m1', 'm2', 'm4']);
+      expect(instance.saldoFinalDeclarado).toBe(140);
+    });
+  });
+  /* eslint-enable @typescript-eslint/no-unsafe-return */
+
   it('no llama a la IA y notifica "error" si el PDF no tiene capa de texto', async () => {
     const instance = buildExtractoInstance();
     extractoModelMock.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(instance) });
@@ -232,7 +377,7 @@ describe('ExtractosIaProcessor', () => {
       fakePort.extraerMovimientos.mockReturnValue(new Promise<never>(() => {}));
 
       const procesamiento = processor.process(buildJob());
-      await jest.advanceTimersByTimeAsync(8 * 60 * 1000);
+      await jest.advanceTimersByTimeAsync(15 * 60 * 1000);
       await procesamiento;
 
       expect(instance.estado).toBe(EstadoExtracto.ERROR);

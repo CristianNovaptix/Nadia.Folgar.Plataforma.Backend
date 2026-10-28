@@ -2,6 +2,7 @@ import { z } from 'zod/v4';
 import type {
   CuentaContableDisponible,
   ReglaExistenteResumen,
+  TramoExtracto,
 } from '../../ports/ai-extraction.port';
 
 /**
@@ -78,8 +79,34 @@ export function construirMensajeUsuario(input: {
   pistaRevision?: string;
   cuentasContablesDisponibles?: CuentaContableDisponible[];
   reglasExistentes?: ReglaExistenteResumen[];
+  tramo?: TramoExtracto;
 }): string {
-  const partes = [`Extracto: "${input.nombreArchivo}".`, '', 'TEXTO DEL EXTRACTO:', input.texto];
+  const partes = [`Extracto: "${input.nombreArchivo}".`];
+
+  if (input.tramo) {
+    const { numero, total } = input.tramo;
+    partes.push(
+      '',
+      `PARTE ${numero} DE ${total}: el extracto es largo y se procesa por partes, cortado entre páginas. Abajo va solo esta parte: transcribí TODOS sus movimientos, sin omitir ninguno.`,
+      ...(numero > 1
+        ? [
+            'Si esta parte empieza con líneas de detalle sueltas (sin fecha) que continúan un movimiento de la parte anterior, no las transcribas: ese movimiento ya se toma en la parte anterior.',
+          ]
+        : []),
+      'Transcribí solo las filas de la tabla de movimientos de la cuenta (la que va formando el saldo). NO transcribas listados de detalle o anexos que repiten o resumen movimientos ya informados en esa tabla, aunque tengan fecha e importe (ej. "Detalle de transferencias recibidas", "Débitos automáticos", totales o percepciones de impuestos): si esta parte solo tiene eso, devolvé "movimientos" vacío.',
+      'Informá "saldoInicialDeclarado" solo si la fila "Saldo Inicial"/"Saldo anterior" del comienzo del período aparece en esta parte, y "saldoFinalDeclarado" solo si el saldo final de cierre del período aparece en esta parte; si no, null.',
+    );
+  }
+
+  partes.push('', 'TEXTO DEL EXTRACTO:', input.texto);
+
+  if (input.tramo?.continuacion) {
+    partes.push(
+      '',
+      'COMIENZO DE LA PARTE SIGUIENTE (solo para completar el último movimiento de esta parte si quedó cortado entre páginas; NO transcribas movimientos que empiecen acá):',
+      input.tramo.continuacion,
+    );
+  }
 
   if (input.pistaRevision) {
     partes.push(

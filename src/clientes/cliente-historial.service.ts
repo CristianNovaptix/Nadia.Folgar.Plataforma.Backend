@@ -55,7 +55,7 @@ interface EventoNuevo {
   usuarioId?: Types.ObjectId;
 }
 
-type ConFechas = { _id: Types.ObjectId; createdAt?: Date };
+type ConFechas = { _id: Types.ObjectId; createdAt?: Date; esPrueba?: boolean };
 
 function fechaCorta(fecha: Date): string {
   return new Date(fecha).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
@@ -140,7 +140,7 @@ export class ClienteHistorialService {
       const id = new Types.ObjectId(clienteId);
       const cliente = await this.clienteModel
         .findOne({ _id: id, estudioId })
-        .select('createdAt')
+        .select('createdAt esPrueba')
         .lean<ConFechas>()
         .exec();
       if (cliente) await this.sincronizar(id, estudioId, cliente);
@@ -155,7 +155,7 @@ export class ClienteHistorialService {
     const id = new Types.ObjectId(clienteId);
     const cliente = await this.clienteModel
       .findOne({ _id: id, estudioId })
-      .select('createdAt')
+      .select('createdAt esPrueba')
       .lean<ConFechas>()
       .exec();
     if (!cliente) throw new NotFoundException('Cliente no encontrado');
@@ -165,7 +165,7 @@ export class ClienteHistorialService {
     return this.eventoModel
       .find({ clienteId: id, estudioId })
       .sort({ fecha: -1, createdAt: -1 })
-      .select('tipo descripcion fecha usuarioNombre')
+      .select('tipo descripcion fecha usuarioNombre esPrueba')
       .lean()
       .exec();
   }
@@ -179,27 +179,34 @@ export class ClienteHistorialService {
     const filtro = { clienteId: id, estudioId };
     const [usuarios, extractos, reuniones, documentos, comunicados, facturas, vencimientos, avisos, tareas] =
       await Promise.all([
-        this.userModel.find({ clienteId: id }).select('email createdAt').lean().exec(),
-        this.extractoModel.find(filtro).select('nombreArchivo periodo createdAt').lean().exec(),
-        this.reunionModel.find(filtro).select('titulo fecha creadoPor createdAt').lean().exec(),
-        this.documentoModel.find(filtro).select('nombre createdAt').lean().exec(),
-        this.comunicadoModel.find(filtro).select('titulo createdAt').lean().exec(),
+        this.userModel.find({ clienteId: id }).select('email createdAt esPrueba').lean().exec(),
+        this.extractoModel.find(filtro).select('nombreArchivo periodo createdAt esPrueba').lean().exec(),
+        this.reunionModel.find(filtro).select('titulo fecha creadoPor createdAt esPrueba').lean().exec(),
+        this.documentoModel.find(filtro).select('nombre createdAt esPrueba').lean().exec(),
+        this.comunicadoModel.find(filtro).select('titulo createdAt esPrueba').lean().exec(),
         this.facturaModel
           .find(filtro)
-          .select('concepto monto numeroComprobante fechaEmision createdAt')
+          .select('concepto monto numeroComprobante fechaEmision createdAt esPrueba')
           .lean()
           .exec(),
-        this.vencimientoModel.find(filtro).select('tipo fecha createdAt').lean().exec(),
-        this.notificacionModel.find(filtro).select('canal fechaEnvio estado').lean().exec(),
+        this.vencimientoModel.find(filtro).select('tipo fecha createdAt esPrueba').lean().exec(),
+        this.notificacionModel.find(filtro).select('canal fechaEnvio estado esPrueba').lean().exec(),
         this.tareaModel
           .find(filtro)
-          .select('titulo jurisdiccion periodo creadoPor createdAt')
+          .select('titulo jurisdiccion periodo creadoPor createdAt esPrueba')
           .lean()
           .exec(),
       ]);
 
     const eventos: EventoNuevo[] = [];
     const creado = (doc: { createdAt?: Date }) => doc.createdAt ?? new Date();
+    // Registros creados desde la cuenta de pruebas: su evento de alta también se marca.
+    const dePrueba = new Set(
+      [cliente, ...usuarios, ...extractos, ...reuniones, ...documentos, ...comunicados]
+        .concat(facturas, vencimientos, avisos, tareas)
+        .filter((doc) => (doc as ConFechas).esPrueba)
+        .map((doc) => (doc as ConFechas)._id.toString()),
+    );
 
     eventos.push({
       tipo: TIPO_EVENTO.CLIENTE_CREADO,
@@ -313,6 +320,7 @@ export class ClienteHistorialService {
             clienteId: id,
             estudioId,
             usuarioNombre: e.usuarioId ? nombres.get(e.usuarioId.toString()) : undefined,
+            ...(e.origenId && dePrueba.has(e.origenId.toString()) ? { esPrueba: true } : {}),
           },
         },
         upsert: true,

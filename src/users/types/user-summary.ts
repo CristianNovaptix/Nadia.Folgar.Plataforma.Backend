@@ -50,4 +50,6 @@ export interface UserSummary {
   genero: 'masculino' | 'femenino' | null;
   /** Dueño/a real del estudio (`User.esTitular`) — ver el comentario en `user.schema.ts`. */
   esTitular: boolean;
+  /** Creado desde la cuenta de pruebas — ver `common/database/registro-prueba.ts`. */
+  esPrueba: boolean;
 }

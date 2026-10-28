@@ -5,7 +5,9 @@ import { Model, Types } from 'mongoose';
 import { Job } from 'bullmq';
 import {
   AiCredenciales,
+  AiExtractionInput,
   AiExtractionPort,
+  ExtraccionResultado,
   MovimientoExtraido,
   ReglaClasificacionSugerida,
   ReglaExistenteResumen,
@@ -18,6 +20,7 @@ import {
   EstadoExtracto,
   ExtractoBancario,
   ExtractoBancarioDocument,
+  MovimientoExtracto,
   TipoMovimiento,
   ValidacionSaldo,
 } from './schemas/extracto-bancario.schema';
@@ -38,6 +41,14 @@ import {
   determinarEstadoFinal,
   filtrarFilasNoTransaccionales,
 } from './validacion-saldo';
+import {
+  TRAMOS_EN_PARALELO,
+  armarTramos,
+  combinarSaldos,
+  esCortePorLargo,
+  mapConConcurrencia,
+  unificarReglasSugeridas,
+} from './extraccion-por-tramos';
 
 /**
  * Control determinístico de una regla sugerida por la IA ANTES de crearla
@@ -101,7 +112,9 @@ export interface ProcesarExtractoJobData {
  * gane la carrera y deje un mensaje de error legible en vez de que el SDK
  * tire su propio error crudo primero.
  */
-const TIMEOUT_PROCESAMIENTO_MS = 8 * 60 * 1000;
+// 15 min (antes 8): los extractos largos van en varias partes (ver `extraccion-por-tramos.ts`).
+// Sigue por debajo del umbral del watchdog (20 min).
+const TIMEOUT_PROCESAMIENTO_MS = 15 * 60 * 1000;
 
 /**
  * Worker BullMQ que hace el trabajo pesado que antes vivía en
@@ -246,7 +259,8 @@ export class ExtractosIaProcessor extends WorkerHost {
     const extractoId = extracto._id.toString();
 
     this.notificarProgreso(estudioId, extractoId, 'Leyendo el PDF', 10);
-    const { texto, tieneCapaDeTexto } = await this.pdfTextExtractor.extraer(contenidoBase64);
+    const { texto, tieneCapaDeTexto, paginas } =
+      await this.pdfTextExtractor.extraer(contenidoBase64);
 
     if (!tieneCapaDeTexto) {
       extracto.estado = EstadoExtracto.ERROR;
@@ -274,66 +288,141 @@ export class ExtractosIaProcessor extends WorkerHost {
       'Consultando la IA para transcribir los movimientos',
       30,
     );
-    let resultado = await aiExtractionPort.extraerMovimientos(
-      {
-        nombreArchivo,
-        texto,
-        cuentasContablesDisponibles: cuentasContables.map((c) => ({
-          codigo: c.codigo,
-          nombre: c.nombre,
-          naturaleza: c.naturaleza,
-        })),
-        reglasExistentes,
-      },
-      credenciales,
-    );
+    // Extractos largos se procesan por partes (ver `extraccion-por-tramos.ts`); uno corto es un
+    // único tramo con el texto completo, igual que antes.
+    let tramos = armarTramos(texto, paginas);
+    const datosTramo = (indice: number): Pick<AiExtractionInput, 'texto' | 'tramo'> =>
+      tramos.length > 1
+        ? {
+            texto: tramos[indice].texto,
+            tramo: {
+              numero: indice + 1,
+              total: tramos.length,
+              continuacion: tramos[indice].continuacion,
+            },
+          }
+        : { texto: tramos[indice].texto };
 
-    if (!resultado.exitoso) {
+    let terminados = 0;
+    const transcribir = () =>
+      mapConConcurrencia(tramos, TRAMOS_EN_PARALELO, async (_, indice) => {
+        const input: AiExtractionInput = {
+          nombreArchivo,
+          ...datosTramo(indice),
+          cuentasContablesDisponibles: cuentasContables.map((c) => ({
+            codigo: c.codigo,
+            nombre: c.nombre,
+            naturaleza: c.naturaleza,
+          })),
+          reglasExistentes,
+        };
+        if (tramos.length === 1) return aiExtractionPort.extraerMovimientos(input, credenciales);
+
+        // Con varias partes, una falla puntual de una sola no tira abajo todo el extracto: se reintenta una vez.
+        let resultadoTramo = await aiExtractionPort
+          .extraerMovimientos(input, credenciales)
+          .catch((error: unknown) => {
+            this.logger.warn(
+              `Falló la parte ${indice + 1}/${tramos.length} de "${nombreArchivo}", se reintenta: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return null;
+          });
+        if (!resultadoTramo?.exitoso) {
+          resultadoTramo = await aiExtractionPort.extraerMovimientos(input, credenciales);
+        }
+        terminados += 1;
+        this.notificarProgreso(
+          estudioId,
+          extractoId,
+          `Transcribiendo los movimientos (parte ${terminados} de ${tramos.length})`,
+          30 + Math.floor((39 * terminados) / tramos.length),
+        );
+        return resultadoTramo;
+      });
+
+    let resultados = await transcribir();
+
+    // Red de seguridad: si la llamada única se cortó por el tope de largo de la respuesta (el
+    // extracto resultó más largo de lo estimado), se reintenta por partes.
+    if (tramos.length === 1 && esCortePorLargo(resultados[0])) {
+      const porPartes = armarTramos(texto, paginas, true);
+      if (porPartes.length > 1) {
+        this.logger.warn(
+          `La respuesta de la IA para "${nombreArchivo}" se cortó por largo; se reintenta en ${porPartes.length} partes.`,
+        );
+        tramos = porPartes;
+        resultados = await transcribir();
+      }
+    }
+
+    const fallido = resultados.findIndex((r) => !r.exitoso);
+    if (fallido >= 0) {
+      const mensaje = resultados[fallido].mensaje ?? 'No se pudo procesar el extracto.';
       extracto.estado = EstadoExtracto.ERROR;
-      extracto.mensajeError = resultado.mensaje ?? 'No se pudo procesar el extracto.';
+      extracto.mensajeError =
+        tramos.length > 1
+          ? `No se pudo procesar la parte ${fallido + 1} de ${tramos.length} del extracto: ${mensaje}`
+          : mensaje;
       return { reglasSugeridas: [], cuentasContables };
     }
 
     // Se captura del primer intento — el reintento (abajo) es solo para
     // corregir filas con diferencia de saldo, no vuelve a pedir contexto
     // de plan de cuentas/reglas ni a inferir reglas de nuevo.
-    const reglasSugeridas = resultado.reglasSugeridas ?? [];
+    const reglasSugeridas =
+      resultados.length === 1
+        ? (resultados[0].reglasSugeridas ?? [])
+        : unificarReglasSugeridas(resultados.map((r) => r.reglasSugeridas ?? []));
 
     this.notificarProgreso(estudioId, extractoId, 'Validando saldos', 70);
-    let movimientos = construirMovimientosConValidacion(
-      this.mapearExtraidos(filtrarFilasNoTransaccionales(resultado.movimientos)),
-      resultado.saldoInicialDeclarado,
-    );
+    let movimientos = this.validarTramos(resultados);
 
-    // Reintento acotado (máx. 1): si hay diferencias de saldo, se le pide a
-    // la IA que revise solo las filas problemáticas antes de resignarse.
+    // Reintento acotado (máx. 1 por parte): si hay diferencias de saldo, se le
+    // pide a la IA que revise solo las filas problemáticas antes de resignarse
+    // — con varias partes, solo se reintentan las partes que tienen diferencias.
     if (movimientos.some((m) => m.validacionSaldo === ValidacionSaldo.DIFERENCIA)) {
       this.notificarProgreso(estudioId, extractoId, 'Revisando diferencias de saldo con la IA', 85);
-      const reintento = await aiExtractionPort.extraerMovimientos(
-        {
-          nombreArchivo,
-          texto,
-          pistaRevision: describirDiferencias(movimientos),
+      const rangos = this.rangosPorTramo(resultados);
+      const conDiferencias = rangos
+        .map((rango, indice) => ({ indice, filas: movimientos.slice(rango.desde, rango.hasta) }))
+        .filter(({ filas }) => contarDiferencias(filas) > 0);
+
+      const reintentos = await mapConConcurrencia(
+        conDiferencias,
+        TRAMOS_EN_PARALELO,
+        ({ indice, filas }) => {
+          const reintento = aiExtractionPort.extraerMovimientos(
+            { nombreArchivo, ...datosTramo(indice), pistaRevision: describirDiferencias(filas) },
+            credenciales,
+          );
+          // Con varias partes, si falla el reintento de una se queda con lo del primer intento.
+          return tramos.length === 1
+            ? reintento
+            : reintento.catch((): ExtraccionResultado => ({
+                exitoso: false,
+                movimientos: [],
+                reglasSugeridas: [],
+              }));
         },
-        credenciales,
       );
 
-      if (reintento.exitoso) {
-        const movimientosReintento = construirMovimientosConValidacion(
-          this.mapearExtraidos(filtrarFilasNoTransaccionales(reintento.movimientos)),
-          reintento.saldoInicialDeclarado,
-        );
+      reintentos.forEach((reintento, i) => {
+        if (!reintento.exitoso) return;
+        const candidato = [...resultados];
+        candidato[conDiferencias[i].indice] = reintento;
+        const movimientosReintento = this.validarTramos(candidato);
         if (contarDiferencias(movimientosReintento) < contarDiferencias(movimientos)) {
           movimientos = movimientosReintento;
-          resultado = reintento;
+          resultados = candidato;
         }
-      }
+      });
     }
 
+    const saldos = combinarSaldos(resultados);
     extracto.movimientos = movimientos;
-    extracto.saldoInicialDeclarado = resultado.saldoInicialDeclarado;
-    extracto.saldoFinalDeclarado = resultado.saldoFinalDeclarado;
-    extracto.estado = determinarEstadoFinal(movimientos, resultado.saldoFinalDeclarado);
+    extracto.saldoInicialDeclarado = saldos.saldoInicialDeclarado;
+    extracto.saldoFinalDeclarado = saldos.saldoFinalDeclarado;
+    extracto.estado = determinarEstadoFinal(movimientos, saldos.saldoFinalDeclarado);
     extracto.mensajeError = undefined;
 
     return { reglasSugeridas, cuentasContables };
@@ -455,6 +544,25 @@ export class ExtractosIaProcessor extends WorkerHost {
       extractoId: extracto._id.toString(),
       estado: extracto.estado,
       nombreArchivo: extracto.nombreArchivo,
+    });
+  }
+
+  /** Une los movimientos de todas las partes, en orden, y valida el saldo fila por fila sobre el total. */
+  private validarTramos(resultados: ExtraccionResultado[]): MovimientoExtracto[] {
+    return construirMovimientosConValidacion(
+      this.mapearExtraidos(resultados.flatMap((r) => filtrarFilasNoTransaccionales(r.movimientos))),
+      combinarSaldos(resultados).saldoInicialDeclarado,
+    );
+  }
+
+  /** Qué filas de `validarTramos` salieron de cada parte. */
+  private rangosPorTramo(resultados: ExtraccionResultado[]): { desde: number; hasta: number }[] {
+    let desde = 0;
+    return resultados.map((r) => {
+      const hasta = desde + filtrarFilasNoTransaccionales(r.movimientos).length;
+      const rango = { desde, hasta };
+      desde = hasta;
+      return rango;
     });
   }
 

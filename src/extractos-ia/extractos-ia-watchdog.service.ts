@@ -12,7 +12,7 @@ import { RealtimeGateway } from '../realtime/realtime.gateway';
 /**
  * Techo de tiempo en `PROCESANDO` antes de considerar un extracto perdido —
  * bien por encima del timeout propio de `ExtractosIaProcessor.process`
- * (`TIMEOUT_PROCESAMIENTO_MS`, 8 min) para no pisarle el resultado a un job
+ * (`TIMEOUT_PROCESAMIENTO_MS`, 15 min) para no pisarle el resultado a un job
  * que todavía está corriendo dentro de su propio margen.
  */
 const UMBRAL_ESTANCADO_MS = 20 * 60 * 1000;

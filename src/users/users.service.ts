@@ -372,6 +372,7 @@ export class UsersService {
       // que pedirle a `ClientesService` esa información aparte — mismo
       // criterio que ya usa `ClientesService.findResponsablesAutomaticos`.
       esTitular: Boolean(user.esTitular),
+      esPrueba: Boolean((user as { esPrueba?: boolean }).esPrueba),
     };
   }
 

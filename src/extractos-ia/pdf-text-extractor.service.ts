@@ -7,6 +7,8 @@ const MIN_CARACTERES_UTILES = 50;
 export interface TextoPdfExtraido {
   texto: string;
   tieneCapaDeTexto: boolean;
+  /** Texto de cada página, en orden — para partir extractos largos (ver `extraccion-por-tramos.ts`). */
+  paginas?: string[];
 }
 
 /**
@@ -40,7 +42,11 @@ export class PdfTextExtractorService {
       const texto = resultado.text ?? '';
       const caracteresUtiles = texto.replace(/\s/g, '').length;
 
-      return { texto, tieneCapaDeTexto: caracteresUtiles >= MIN_CARACTERES_UTILES };
+      return {
+        texto,
+        tieneCapaDeTexto: caracteresUtiles >= MIN_CARACTERES_UTILES,
+        paginas: (resultado.pages ?? []).map((pagina) => pagina.text ?? ''),
+      };
     } catch (error) {
       const mensaje = error instanceof Error ? error.message : 'Error desconocido';
       this.logger.warn(`No se pudo parsear el PDF: ${mensaje}`);
