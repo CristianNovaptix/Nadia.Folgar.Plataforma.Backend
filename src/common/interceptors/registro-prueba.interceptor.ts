@@ -8,7 +8,7 @@ import { esUsuarioPrueba, registroPruebaContext } from '../database/registro-pru
 export class RegistroPruebaInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const user = context.switchToHttp().getRequest<{ user?: AuthenticatedUser }>()?.user;
-    const store = { esPrueba: esUsuarioPrueba(user) };
+    const store = { esPrueba: esUsuarioPrueba(user), userId: user?.userId };
     return new Observable((subscriber) =>
       registroPruebaContext.run(store, () => next.handle().subscribe(subscriber)),
     );

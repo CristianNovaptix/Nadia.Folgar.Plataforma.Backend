@@ -6,6 +6,7 @@ import { InicioService, periodoAnterior } from './inicio.service';
 import { GastoMensual } from './schemas/gasto-mensual.schema';
 import { ImporteManualMes } from './schemas/importe-manual-mes.schema';
 import { Reunion } from './schemas/reunion.schema';
+import { Feriado } from './schemas/feriado.schema';
 import { User } from '../users/schemas/user.schema';
 import { ClienteHistorialService } from '../clientes/cliente-historial.service';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
@@ -28,6 +29,7 @@ describe('InicioService', () => {
         { provide: getModelToken(ImporteManualMes.name), useValue: importeModelMock },
         { provide: getModelToken(Reunion.name), useValue: reunionModelMock },
         { provide: getModelToken(User.name), useValue: {} },
+        { provide: getModelToken(Feriado.name), useValue: {} },
         { provide: ClienteHistorialService, useValue: historialMock },
         {
           provide: GoogleCalendarService,

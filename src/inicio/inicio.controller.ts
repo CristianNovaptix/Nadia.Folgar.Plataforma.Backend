@@ -9,6 +9,7 @@ import { PERMISSIONS } from '../common/constants/permissions';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { InicioService } from './inicio.service';
 import {
+  CreateFeriadoDto,
   CreateGastoDto,
   CreateReunionDto,
   QueryPeriodoDto,
@@ -123,5 +124,30 @@ export class InicioController {
   @Permissions(PERMISSIONS.CLIENTES_WRITE)
   deleteReunion(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.inicioService.deleteReunion(id, new Types.ObjectId(user.estudioId), user.userId);
+  }
+
+  @Get('feriados')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  findFeriados(@CurrentUser() user: AuthenticatedUser) {
+    return this.inicioService.findFeriados(new Types.ObjectId(user.estudioId));
+  }
+
+  /** Solo el rol Contadora (código 'admin'): lo valida el servicio, igual que editar/eliminar. */
+  @Post('feriados')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  createFeriado(@Body() dto: CreateFeriadoDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.inicioService.createFeriado(dto, new Types.ObjectId(user.estudioId), user.roles);
+  }
+
+  @Patch('feriados/:id')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  updateFeriado(@Param('id') id: string, @Body() dto: CreateFeriadoDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.inicioService.updateFeriado(id, dto, new Types.ObjectId(user.estudioId), user.roles);
+  }
+
+  @Delete('feriados/:id')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  deleteFeriado(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.inicioService.deleteFeriado(id, new Types.ObjectId(user.estudioId), user.roles);
   }
 }

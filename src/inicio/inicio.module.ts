@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { GastoMensual, GastoMensualSchema } from './schemas/gasto-mensual.schema';
 import { ImporteManualMes, ImporteManualMesSchema } from './schemas/importe-manual-mes.schema';
 import { Reunion, ReunionSchema } from './schemas/reunion.schema';
+import { Feriado, FeriadoSchema } from './schemas/feriado.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { ClientesModule } from '../clientes/clientes.module';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
@@ -17,6 +18,7 @@ import { InicioController } from './inicio.controller';
       { name: GastoMensual.name, schema: GastoMensualSchema },
       { name: ImporteManualMes.name, schema: ImporteManualMesSchema },
       { name: Reunion.name, schema: ReunionSchema },
+      { name: Feriado.name, schema: FeriadoSchema },
       { name: User.name, schema: UserSchema },
     ]),
   ],

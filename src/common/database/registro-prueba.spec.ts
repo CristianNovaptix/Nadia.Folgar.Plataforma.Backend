@@ -71,4 +71,22 @@ describe('registroPruebaPlugin', () => {
     expect(esUsuarioPrueba({ userId: 'x', email: 'nadia.folgar@folgar.com.ar' })).toBe(false);
     expect(esUsuarioPrueba(undefined)).toBe(false);
   });
+
+  it('guarda quién creó cada registro (create e insertMany), sin pisar uno ya elegido', async () => {
+    const userId = new mongoose.Types.ObjectId();
+    const otro = new mongoose.Types.ObjectId();
+    const [creado, insertado, conDuenio] = await registroPruebaContext.run(
+      { esPrueba: false, userId: userId.toString() },
+      async () => [
+        await modelo().create({ nombre: 'a' }),
+        (await modelo().insertMany([{ nombre: 'b' }]))[0],
+        await modelo().create({ nombre: 'c', creadoPor: otro }),
+      ],
+    );
+    const leer = async (id: unknown) =>
+      String((await modelo().findById(id).lean<{ creadoPor?: unknown }>())?.creadoPor);
+    expect(await leer(creado._id)).toBe(userId.toString());
+    expect(await leer(insertado._id)).toBe(userId.toString());
+    expect(await leer(conDuenio._id)).toBe(otro.toString());
+  });
 });

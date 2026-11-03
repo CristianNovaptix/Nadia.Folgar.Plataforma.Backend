@@ -1,13 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { GastoMensual } from './schemas/gasto-mensual.schema';
 import { ImporteManualMes } from './schemas/importe-manual-mes.schema';
 import { Reunion } from './schemas/reunion.schema';
+import { Feriado } from './schemas/feriado.schema';
 import { User } from '../users/schemas/user.schema';
 import { ClienteHistorialService, TIPO_EVENTO } from '../clientes/cliente-historial.service';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import {
+  CreateFeriadoDto,
   CreateGastoDto,
   CreateReunionDto,
   UpdateGastoDto,
@@ -32,6 +34,7 @@ export class InicioService {
     @InjectModel(ImporteManualMes.name) private readonly importeModel: Model<ImporteManualMes>,
     @InjectModel(Reunion.name) private readonly reunionModel: Model<Reunion>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(Feriado.name) private readonly feriadoModel: Model<Feriado>,
     private readonly historial: ClienteHistorialService,
     private readonly googleCalendar: GoogleCalendarService,
   ) {}
@@ -177,5 +180,36 @@ export class InicioService {
     );
     await this.googleCalendar.quitarReunion(reunion);
     await reunion.deleteOne();
+  }
+
+  findFeriados(estudioId: Types.ObjectId) {
+    return this.feriadoModel.find({ estudioId }).sort({ fecha: 1 }).exec();
+  }
+
+  /** Solo el rol Contadora (código interno 'admin') puede agregar feriados. */
+  createFeriado(dto: CreateFeriadoDto, estudioId: Types.ObjectId, roles: string[]) {
+    this.exigirContadora(roles);
+    return this.feriadoModel.create({ ...dto, estudioId });
+  }
+
+  async updateFeriado(id: string, dto: CreateFeriadoDto, estudioId: Types.ObjectId, roles: string[]) {
+    this.exigirContadora(roles);
+    const feriado = await this.feriadoModel
+      .findOneAndUpdate({ _id: id, estudioId }, dto, { new: true })
+      .exec();
+    if (!feriado) throw new NotFoundException('Feriado no encontrado');
+    return feriado;
+  }
+
+  async deleteFeriado(id: string, estudioId: Types.ObjectId, roles: string[]) {
+    this.exigirContadora(roles);
+    const feriado = await this.feriadoModel.findOneAndDelete({ _id: id, estudioId }).exec();
+    if (!feriado) throw new NotFoundException('Feriado no encontrado');
+  }
+
+  private exigirContadora(roles: string[]) {
+    if (!roles.includes('admin')) {
+      throw new ForbiddenException('Solo la contadora puede gestionar feriados');
+    }
   }
 }

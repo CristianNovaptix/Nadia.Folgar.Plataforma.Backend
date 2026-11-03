@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { Model, Schema } from 'mongoose';
+import { Model, Schema, Types } from 'mongoose';
 
 /**
  * Cuentas cuyos registros quedan marcados como de prueba (`esPrueba: true`),
@@ -19,22 +19,39 @@ export const esUsuarioPrueba = (user?: { userId?: string; email?: string | null 
 export const MODELOS_SIN_MARCA_PRUEBA = ['ReglaClasificacion'];
 
 /** Contexto del request en curso — lo abre `RegistroPruebaInterceptor`. */
-export const registroPruebaContext = new AsyncLocalStorage<{ esPrueba: boolean }>();
+export const registroPruebaContext = new AsyncLocalStorage<{ esPrueba: boolean; userId?: string }>();
+
+/** Quién está haciendo el request en curso (para `creadoPor`). */
+function usuarioActual(): Types.ObjectId | undefined {
+  const id = registroPruebaContext.getStore()?.userId;
+  return id && Types.ObjectId.isValid(id) ? new Types.ObjectId(id) : undefined;
+}
 
 /**
  * Plugin global: suma `esPrueba` a todos los schemas y lo marca en `true` al
- * crear un documento dentro de un request de un usuario de prueba.
+ * crear un documento dentro de un request de un usuario de prueba. Además
+ * guarda en `creadoPor` quién creó cada registro (pedido del usuario: el
+ * historial de actividad siempre tiene que decir quién hizo cada cosa).
  */
 export function registroPruebaPlugin(schema: Schema): void {
   schema.add({ esPrueba: { type: Boolean } });
+  if (!schema.path('creadoPor')) {
+    schema.add({ creadoPor: { type: Schema.Types.ObjectId, ref: 'User' } });
+  }
 
   schema.pre('save', function () {
     if (this.$isSubdocument || !this.isNew) return;
+    const usuario = usuarioActual();
+    if (usuario && !this.get('creadoPor')) this.set('creadoPor', usuario);
     if (MODELOS_SIN_MARCA_PRUEBA.includes((this.constructor as Model<unknown>).modelName)) return;
     if (registroPruebaContext.getStore()?.esPrueba) this.set('esPrueba', true);
   });
 
   schema.pre('insertMany', function (this: Model<unknown>, next: () => void, docs: unknown) {
+    const usuario = usuarioActual();
+    if (usuario && Array.isArray(docs)) {
+      for (const doc of docs as Record<string, unknown>[]) doc.creadoPor ??= usuario;
+    }
     if (MODELOS_SIN_MARCA_PRUEBA.includes(this.modelName)) return next();
     if (registroPruebaContext.getStore()?.esPrueba && Array.isArray(docs)) {
       for (const doc of docs as Record<string, unknown>[]) doc.esPrueba = true;

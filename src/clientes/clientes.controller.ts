@@ -22,6 +22,7 @@ import { ClientesService } from './clientes.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { QueryClienteDto } from './dto/query-cliente.dto';
+import { QueryActividadDto } from './dto/query-actividad.dto';
 import { RegenerarPasswordDto } from '../users/dto/regenerar-password.dto';
 import { ClienteHistorialService, TIPO_EVENTO } from './cliente-historial.service';
 
@@ -39,6 +40,13 @@ export class ClientesController {
   @Permissions(PERMISSIONS.CLIENTES_READ)
   findAll(@Query() query: QueryClienteDto, @CurrentUser() user: AuthenticatedUser) {
     return this.clientesService.findAll(query, new Types.ObjectId(user.estudioId));
+  }
+
+  /** "Ver toda la actividad" del Inicio: historial de todos los clientes del estudio. */
+  @Get('actividad')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  actividad(@Query() query: QueryActividadDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.historial.listarEstudio(new Types.ObjectId(user.estudioId), query);
   }
 
   /** "Ver historial" del menú de Clientes — ver `ClienteHistorialService`. */

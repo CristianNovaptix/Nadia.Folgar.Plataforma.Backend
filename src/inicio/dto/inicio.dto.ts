@@ -119,3 +119,12 @@ export class UpdateReunionDto {
   @IsMongoId({ each: true })
   miembros?: string[];
 }
+
+export class CreateFeriadoDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'fecha debe tener formato YYYY-MM-DD' })
+  fecha: string;
+
+  @IsString()
+  @MinLength(2)
+  nombre: string;
+}
