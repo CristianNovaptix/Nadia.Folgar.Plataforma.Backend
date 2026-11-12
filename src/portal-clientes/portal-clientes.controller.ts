@@ -3,10 +3,12 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   Patch,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -19,10 +21,16 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../common/constants/permissions';
 import { AuthenticatedUser } from '../common/types/authenticated-user';
 import { PortalClientesService } from './portal-clientes.service';
+import { ClientesService } from '../clientes/clientes.service';
+import { NotificacionesClienteService } from './notificaciones-cliente.service';
+import { ActualizarNotificacionClienteDto } from './dto/notificacion-cliente.dto';
 import { CreateDocumentoDto } from './dto/create-documento.dto';
 import { QueryDocumentoDto } from './dto/query-documento.dto';
 import { UpdateDocumentoDto } from './dto/update-documento.dto';
 import { CarpetasDocumentosService } from './carpetas-documentos.service';
+import { ResumenClienteService } from './resumen-cliente.service';
+import { PanelClienteService } from './panel-cliente.service';
+import { GuardarPanelClienteDto } from './dto/panel-cliente.dto';
 import {
   CreateCarpetaDocumentoDto,
   MoverDocumentoDto,
@@ -50,7 +58,118 @@ export class PortalClientesController {
   constructor(
     private readonly portalClientesService: PortalClientesService,
     private readonly carpetasService: CarpetasDocumentosService,
+    private readonly resumenClienteService: ResumenClienteService,
+    private readonly panelClienteService: PanelClienteService,
+    private readonly clientesService: ClientesService,
+    private readonly notificacionesClienteService: NotificacionesClienteService,
   ) {}
+
+  /** Inicio del rol cliente: datos de ARCA y honorarios del propio cliente del token. */
+  @Get('mi-resumen')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  miResumen(@CurrentUser() user: AuthenticatedUser) {
+    return this.resumenClienteService.resumen(user);
+  }
+
+  /**
+   * Pestaña "Credenciales" de "Mi portal": usuario y vista previa de la contraseña de
+   * ARCA/ARBA/AGIP que el estudio cargó para el propio cliente del token (nunca otro).
+   */
+  @Get('mis-credenciales')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  async misCredenciales(@CurrentUser() user: AuthenticatedUser) {
+    const cliente = await this.clientesService.findOne(
+      this.clienteDelPortal(user),
+      new Types.ObjectId(user.estudioId),
+    );
+    const resumen = (valor: unknown) => {
+      const c = (valor ?? {}) as { usuario?: string; passwordPreview?: string };
+      return { usuario: c.usuario, passwordPreview: c.passwordPreview };
+    };
+    return {
+      arca: resumen(cliente.credencialesArca),
+      arba: resumen(cliente.credencialesArba),
+      agip: resumen(cliente.credencialesAgip),
+    };
+  }
+
+  /** "Ver contraseña" de su propia credencial — mismo descifrado que usa el estudio. */
+  @Get('mis-credenciales/:organismo/revelar')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  revelarMiCredencial(@Param('organismo') organismo: string, @CurrentUser() user: AuthenticatedUser) {
+    if (organismo !== 'arca' && organismo !== 'arba' && organismo !== 'agip') {
+      throw new BadRequestException('Organismo inválido');
+    }
+    return this.clientesService.revelarCredencial(
+      this.clienteDelPortal(user),
+      organismo,
+      new Types.ObjectId(user.estudioId),
+    );
+  }
+
+  // ── Campanita del portal (comunicados con estado por usuario) ─────────
+
+  @Get('mis-notificaciones')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  misNotificaciones(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificacionesClienteService.listar(user);
+  }
+
+  @Post('mis-notificaciones/marcar-todas-leidas')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  marcarNotificacionesLeidas(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificacionesClienteService.marcarTodasLeidas(user);
+  }
+
+  @Patch('mis-notificaciones/:comunicadoId')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  actualizarNotificacion(
+    @Param('comunicadoId') comunicadoId: string,
+    @Body() dto: ActualizarNotificacionClienteDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.notificacionesClienteService.actualizar(comunicadoId, dto, user);
+  }
+
+  /** "Eliminar definitivamente" de la papelera: solo la saca de su campanita. */
+  @Delete('mis-notificaciones/:comunicadoId')
+  @Permissions(PERMISSIONS.PORTAL_DOCUMENTOS_READ)
+  eliminarNotificacion(
+    @Param('comunicadoId') comunicadoId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.notificacionesClienteService.actualizar(comunicadoId, { eliminada: true }, user);
+  }
+
+  private clienteDelPortal(user: AuthenticatedUser): string {
+    if (!user.roles.includes('cliente') || !user.clienteId) {
+      throw new ForbiddenException('Solo disponible para usuarios del portal de clientes');
+    }
+    return user.clienteId;
+  }
+
+  /** "Panel del cliente" (carpeta del cliente): lo cargado a mano por mes para su Inicio. */
+  @Get('panel/:clienteId')
+  @Permissions(PERMISSIONS.CLIENTES_READ)
+  listarPanel(@Param('clienteId') clienteId: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.panelClienteService.listar(clienteId, new Types.ObjectId(user.estudioId));
+  }
+
+  @Put('panel/:clienteId/:periodo')
+  @Permissions(PERMISSIONS.CLIENTES_WRITE)
+  guardarPanel(
+    @Param('clienteId') clienteId: string,
+    @Param('periodo') periodo: string,
+    @Body() dto: GuardarPanelClienteDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.panelClienteService.guardar(
+      clienteId,
+      periodo,
+      dto,
+      new Types.ObjectId(user.estudioId),
+    );
+  }
 
   // ── Documentos ────────────────────────────────────────────────────────
 

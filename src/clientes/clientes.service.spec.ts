@@ -817,6 +817,29 @@ describe('ClientesService', () => {
       expect(typeof password).toBe('string');
       expect(emailEnviado).toBe(true);
     });
+
+    it('reutiliza el usuario de portal de un cliente ya eliminado definitivamente con el mismo email', async () => {
+      const cliente = mockClienteConEmail();
+      const usuarioHuerfano = {
+        _id: new Types.ObjectId(),
+        clienteId: new Types.ObjectId(),
+        email: 'cliente@ejemplo.com',
+        nombre: 'Cliente viejo',
+        activo: false,
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      userModelMock.findOne
+        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null) })
+        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(usuarioHuerfano) });
+      clienteModelMock.exists = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
+
+      await service.crearUsuarioPortal(cliente._id.toString(), estudioId);
+
+      expect(userModelMock.create).not.toHaveBeenCalled();
+      expect(usuarioHuerfano.clienteId).toEqual(cliente._id);
+      expect(usuarioHuerfano.activo).toBe(true);
+      expect(usuarioHuerfano.save).toHaveBeenCalled();
+    });
   });
 
   describe('regenerarPasswordPortal ("Cambiar contraseña" — resetea, nunca recupera la original)', () => {

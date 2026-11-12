@@ -41,8 +41,10 @@ function Get-ListeningPortConnections {
     }
 }
 
+# Solo procesos de este repo: "dist/main" a secas tambien coincide con backends de otros proyectos.
+# El que quedo escuchando como "node dist/main.js" lo cierra el chequeo por puerto de mas abajo.
 $backendProcesses = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-  Where-Object { Test-IsBackendNodeProcess $_ }
+  Where-Object { $_.CommandLine -like "*$backendRoot*" }
 
 foreach ($process in $backendProcesses) {
   Stop-BackendProcess $process.ProcessId

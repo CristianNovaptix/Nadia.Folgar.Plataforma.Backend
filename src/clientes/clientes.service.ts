@@ -276,6 +276,11 @@ export class ClientesService {
       filter._id = { $ne: excluirClienteId };
     }
     const existente = await this.clienteModel.findOne(filter).exec();
+    if (existente?.enPapelera) {
+      throw new ConflictException(
+        `El cliente "${existente.nombre}" con ese email está en la papelera. Podés restaurarlo, o eliminarlo definitivamente de la papelera para crear uno nuevo.`,
+      );
+    }
     if (existente) {
       throw new ConflictException('Ya existe un cliente con ese email');
     }
@@ -284,6 +289,11 @@ export class ClientesService {
   async create(dto: CreateClienteDto, estudioId: Types.ObjectId): Promise<Record<string, unknown>> {
     const cuit = normalizeCuit(dto.cuit);
     const existing = await this.clienteModel.findOne({ cuit }).exec();
+    if (existing?.enPapelera) {
+      throw new ConflictException(
+        `El cliente "${existing.nombre}" con ese CUIT está en la papelera. Podés restaurarlo, o eliminarlo definitivamente de la papelera para crear uno nuevo.`,
+      );
+    }
     if (existing) {
       throw new ConflictException('Ya existe un cliente con ese CUIT');
     }
@@ -418,7 +428,7 @@ export class ClientesService {
     }
 
     const emailLogin = cliente.email.toLowerCase().trim();
-    const usuarioExistente = await this.userModel.findOne({ clienteId: cliente._id }).exec();
+    let usuarioExistente = await this.userModel.findOne({ clienteId: cliente._id }).exec();
     if (usuarioExistente && usuarioExistente.activo) {
       throw new ConflictException('Este cliente ya tiene un usuario de portal creado');
     }
@@ -427,7 +437,17 @@ export class ClientesService {
       .findOne({ email: emailLogin, _id: { $ne: usuarioExistente?._id } })
       .exec();
     if (yaExisteEseLogin) {
-      throw new ConflictException('Ya existe un usuario con ese email');
+      // Usuario de portal que quedó de un cliente ya eliminado definitivamente:
+      // se reutiliza para este cliente en vez de bloquear el email.
+      const clienteAnteriorExiste =
+        yaExisteEseLogin.clienteId &&
+        (await this.clienteModel.exists({ _id: yaExisteEseLogin.clienteId }).exec());
+      if (!yaExisteEseLogin.clienteId || clienteAnteriorExiste || usuarioExistente) {
+        throw new ConflictException('Ya existe un usuario con ese email');
+      }
+      yaExisteEseLogin.clienteId = cliente._id;
+      yaExisteEseLogin.nombre = cliente.nombre;
+      usuarioExistente = yaExisteEseLogin;
     }
 
     const password = generarPasswordSegura();

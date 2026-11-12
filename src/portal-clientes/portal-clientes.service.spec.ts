@@ -18,6 +18,7 @@ function chainable(result: unknown): any {
   query.sort = jest.fn().mockReturnValue(query);
   query.skip = jest.fn().mockReturnValue(query);
   query.limit = jest.fn().mockReturnValue(query);
+  query.populate = jest.fn().mockReturnValue(query);
   query.exec = jest.fn().mockResolvedValue(result);
   return query;
 }

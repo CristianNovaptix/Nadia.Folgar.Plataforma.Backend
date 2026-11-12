@@ -10,6 +10,22 @@ import { PortalClientesService } from './portal-clientes.service';
 import { CarpetasDocumentosService } from './carpetas-documentos.service';
 import { CarpetaDocumento, CarpetaDocumentoSchema } from './schemas/carpeta-documento.schema';
 import { PortalClientesController } from './portal-clientes.controller';
+import { ResumenClienteService } from './resumen-cliente.service';
+import {
+  ArcaSincronizacion,
+  ArcaSincronizacionSchema,
+} from '../arca-sync/schemas/arca-sincronizacion.schema';
+import { Factura, FacturaSchema } from '../facturacion-electronica/schemas/factura.schema';
+import {
+  TareaPresentacion,
+  TareaPresentacionSchema,
+} from '../iva-tareas/schemas/tarea-presentacion.schema';
+import { Vencimiento, VencimientoSchema } from '../notificaciones/schemas/vencimiento.schema';
+import { Reunion, ReunionSchema } from '../inicio/schemas/reunion.schema';
+import { PanelClienteMes, PanelClienteMesSchema } from './schemas/panel-cliente-mes.schema';
+import { PanelClienteService } from './panel-cliente.service';
+import { NotificacionesClienteService } from './notificaciones-cliente.service';
+import { ComunicadoEstado, ComunicadoEstadoSchema } from './schemas/comunicado-estado.schema';
 
 /**
  * NOTA: igual que `NotificacionesModule`, este módulo todavía NO se importa
@@ -34,12 +50,22 @@ import { PortalClientesController } from './portal-clientes.controller';
       { name: Comunicado.name, schema: ComunicadoSchema },
       { name: Cliente.name, schema: ClienteSchema },
       { name: CarpetaDocumento.name, schema: CarpetaDocumentoSchema },
+      { name: ArcaSincronizacion.name, schema: ArcaSincronizacionSchema },
+      { name: Factura.name, schema: FacturaSchema },
+      { name: TareaPresentacion.name, schema: TareaPresentacionSchema },
+      { name: Vencimiento.name, schema: VencimientoSchema },
+      { name: Reunion.name, schema: ReunionSchema },
+      { name: PanelClienteMes.name, schema: PanelClienteMesSchema },
+      { name: ComunicadoEstado.name, schema: ComunicadoEstadoSchema },
     ]),
   ],
   controllers: [PortalClientesController],
   providers: [
     PortalClientesService,
     CarpetasDocumentosService,
+    ResumenClienteService,
+    NotificacionesClienteService,
+    PanelClienteService,
     { provide: MESSAGING_PROVIDER, useClass: EmailAdapter },
   ],
   exports: [PortalClientesService],

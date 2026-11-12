@@ -242,6 +242,8 @@ export class PortalClientesService {
         .sort({ createdAt: -1, _id: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
+        // Quién lo publicó (lo guarda solo `registroPruebaPlugin`): el cliente ve "Fulano te comunicó...".
+        .populate('creadoPor', 'nombre')
         .exec(),
       this.comunicadoModel.countDocuments(filter).exec(),
     ]);
