@@ -270,6 +270,14 @@ export class ExtractosIaService {
       movimientosDto,
       extracto.saldoInicialDeclarado,
     );
+    // La validación de saldo devuelve una fila por cada movimiento recibido, en el mismo orden.
+    movimientos.forEach((mov, i) => {
+      const dto = movimientosDto[i];
+      if (dto.cuentaContableId && dto.ladoAsiento) {
+        mov.cuentaContableId = new Types.ObjectId(dto.cuentaContableId);
+        mov.ladoAsiento = dto.ladoAsiento;
+      }
+    });
     extracto.movimientos = movimientos;
 
     if (extracto.estado !== EstadoExtracto.ERROR) {

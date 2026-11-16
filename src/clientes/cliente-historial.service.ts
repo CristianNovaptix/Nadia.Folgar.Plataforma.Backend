@@ -47,6 +47,12 @@ export const TIPO_EVENTO = {
   REGISTRO_ELIMINADO: 'registro_eliminado',
 } as const;
 
+/**
+ * Eventos de Finanzas → Honorarios (`EVENTO_FINANZAS`): tienen importes, así
+ * que solo los ve quien tiene Finanzas completo.
+ */
+const TIPO_FINANZAS = /^honorario_/;
+
 interface EventoNuevo {
   clienteId: Types.ObjectId;
   tipo: string;
@@ -176,7 +182,8 @@ export class ClienteHistorialService {
     await this.registrar(clienteId, estudioId, { tipo, descripcion }, usuarioId);
   }
 
-  async listar(clienteId: string, estudioId: Types.ObjectId) {
+  /** `verFinanzas: false` deja afuera lo de honorarios (abonos, deudas, pagos). */
+  async listar(clienteId: string, estudioId: Types.ObjectId, verFinanzas = true) {
     if (!Types.ObjectId.isValid(clienteId)) throw new NotFoundException('Cliente no encontrado');
     const id = new Types.ObjectId(clienteId);
     const cliente = await this.clienteModel
@@ -189,7 +196,7 @@ export class ClienteHistorialService {
     await this.sincronizar(estudioId, [cliente]);
 
     return this.eventoModel
-      .find({ clienteId: id, estudioId })
+      .find({ clienteId: id, estudioId, ...(verFinanzas ? {} : { tipo: { $not: TIPO_FINANZAS } }) })
       .sort({ fecha: -1, createdAt: -1 })
       .select('tipo descripcion fecha usuarioNombre esPrueba')
       .lean()
@@ -200,7 +207,7 @@ export class ClienteHistorialService {
    * Historial de todos los clientes del estudio ("Ver toda la actividad" del
    * Inicio), de lo más nuevo a lo más viejo, paginado y con filtros.
    */
-  async listarEstudio(estudioId: Types.ObjectId, query: QueryActividad) {
+  async listarEstudio(estudioId: Types.ObjectId, query: QueryActividad, verFinanzas = true) {
     const clave = estudioId.toString();
     if (Date.now() - (this.ultimaSyncGlobal.get(clave) ?? 0) > SYNC_GLOBAL_MS) {
       const clientes = await this.clienteModel
@@ -214,6 +221,7 @@ export class ClienteHistorialService {
 
     const filtro: Record<string, unknown> = { estudioId };
     if (query.tipos?.length) filtro.tipo = { $in: query.tipos };
+    if (!verFinanzas) filtro.tipo = { ...(filtro.tipo as object), $not: TIPO_FINANZAS };
     const clienteIds = (query.clienteIds ?? []).filter((id) => Types.ObjectId.isValid(id));
     if (clienteIds.length) {
       filtro.clienteId = { $in: clienteIds.map((id) => new Types.ObjectId(id)) };

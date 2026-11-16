@@ -26,6 +26,10 @@ import { PanelClienteMes, PanelClienteMesSchema } from './schemas/panel-cliente-
 import { PanelClienteService } from './panel-cliente.service';
 import { NotificacionesClienteService } from './notificaciones-cliente.service';
 import { ComunicadoEstado, ComunicadoEstadoSchema } from './schemas/comunicado-estado.schema';
+import {
+  DeudaHonorario,
+  DeudaHonorarioSchema,
+} from '../finanzas/schemas/deuda-honorario.schema';
 
 /**
  * NOTA: igual que `NotificacionesModule`, este módulo todavía NO se importa
@@ -57,6 +61,8 @@ import { ComunicadoEstado, ComunicadoEstadoSchema } from './schemas/comunicado-e
       { name: Reunion.name, schema: ReunionSchema },
       { name: PanelClienteMes.name, schema: PanelClienteMesSchema },
       { name: ComunicadoEstado.name, schema: ComunicadoEstadoSchema },
+      // Deuda mensual de honorarios (dueño real: `FinanzasModule`) para el Inicio del cliente.
+      { name: DeudaHonorario.name, schema: DeudaHonorarioSchema },
     ]),
   ],
   controllers: [PortalClientesController],

@@ -34,6 +34,7 @@ import { AsistenteIaModule } from './asistente-ia/asistente-ia.module';
 import { ConfiguracionModule } from './configuracion/configuracion.module';
 import { HealthModule } from './health/health.module';
 import { ArcaSyncModule } from './arca-sync/arca-sync.module';
+import { FinanzasModule } from './finanzas/finanzas.module';
 import { useRedisQueues } from './config/queue-mode';
 
 const httpLogsEnabled = (value?: string): boolean => value === 'true' || value === '1';
@@ -132,6 +133,7 @@ const queueImports = useRedisQueues()
     ConfiguracionModule,
     HealthModule,
     ArcaSyncModule,
+    FinanzasModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalHttpExceptionFilter },

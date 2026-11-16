@@ -11,6 +11,7 @@ import { TareaPresentacion } from '../iva-tareas/schemas/tarea-presentacion.sche
 import { Vencimiento } from '../notificaciones/schemas/vencimiento.schema';
 import { Reunion } from '../inicio/schemas/reunion.schema';
 import { PanelClienteMes } from './schemas/panel-cliente-mes.schema';
+import { DeudaHonorario } from '../finanzas/schemas/deuda-honorario.schema';
 
 const query = <T>(valor: T) => {
   const q = {
@@ -82,6 +83,14 @@ describe('ResumenClienteService', () => {
         { provide: getModelToken(TareaPresentacion.name), useValue: { find: jest.fn(() => query([])) } },
         { provide: getModelToken(Vencimiento.name), useValue: { find: jest.fn(() => query([])) } },
         { provide: getModelToken(Reunion.name), useValue: reunionModel },
+        {
+          provide: getModelToken(DeudaHonorario.name),
+          useValue: {
+            find: jest.fn(() =>
+              query([{ _id: new Types.ObjectId(), periodo: '2026-11', monto: 100, pagado: 30 }]),
+            ),
+          },
+        },
       ],
     }).compile();
     service = modulo.get(ResumenClienteService);
@@ -96,7 +105,10 @@ describe('ResumenClienteService', () => {
     expect(resumen.arca.comprobantes).toEqual([{ tipo: 'venta', importeTotal: 100 }]);
     expect(resumen.arca.veps).toEqual([]);
     expect(resumen.arca.vencimientos).toBeNull();
-    expect(resumen.honorarios).toHaveLength(1);
+    // La factura + la deuda de noviembre partida en lo que falta pagar y lo ya pagado.
+    expect(resumen.honorarios).toHaveLength(3);
+    expect(resumen.honorarios[0]).toMatchObject({ monto: 70, pagada: false });
+    expect(resumen.honorarios[1]).toMatchObject({ monto: 30, pagada: true });
     expect(resumen.panel).toEqual([{ periodo: '2026-11', facturacion: 10 }]);
     // Las reuniones del cliente, las haya creado quien sea, sin las de la papelera.
     expect(reunionModel.find.mock.calls[0][0]).toEqual({

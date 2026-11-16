@@ -29,6 +29,12 @@ export const PERMISSIONS = {
   ASISTENTE_IA_USO: 'asistente-ia.uso',
   CONFIGURACION_READ: 'configuracion.read',
   CONFIGURACION_WRITE: 'configuracion.write',
+  /** Finanzas completo: métricas y honorarios de todos los clientes. */
+  FINANZAS_READ: 'finanzas.read',
+  /** Cambiar abonos, generar deudas y anular pagos. */
+  FINANZAS_WRITE: 'finanzas.write',
+  /** Ver los honorarios de los clientes que tiene a cargo y registrarles pagos. */
+  FINANZAS_COBROS: 'finanzas.cobros',
 } as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -60,6 +66,19 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'admin' | 'contador' | 'cliente', 
       PERMISSIONS.CATEDRAL_READ,
       PERMISSIONS.CATEDRAL_WRITE,
       PERMISSIONS.ASISTENTE_IA_USO,
+      PERMISSIONS.FINANZAS_COBROS,
     ],
     cliente: [PERMISSIONS.PORTAL_DOCUMENTOS_READ],
   };
+
+/**
+ * Permisos que se sumaron después de que los roles de sistema ya estaban
+ * creados en la base. `RolesService` se los agrega una sola vez a cada rol
+ * de sistema que los tenga por defecto; si después alguien se los quita
+ * desde Seguridad, no vuelven a aparecer.
+ */
+export const PERMISOS_AGREGADOS_DESPUES: PermissionCode[] = [
+  PERMISSIONS.FINANZAS_READ,
+  PERMISSIONS.FINANZAS_WRITE,
+  PERMISSIONS.FINANZAS_COBROS,
+];

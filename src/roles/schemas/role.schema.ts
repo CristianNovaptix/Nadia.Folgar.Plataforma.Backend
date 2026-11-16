@@ -16,6 +16,10 @@ export class Role {
   /** admin/contador/cliente son roles de sistema: no se pueden borrar. */
   @Prop({ default: false })
   esDeSistema: boolean;
+
+  /** Permisos nuevos que ya se le agregaron solos a este rol — ver `PERMISOS_AGREGADOS_DESPUES`. */
+  @Prop({ type: [String], default: [] })
+  permisosSembrados: PermissionCode[];
 }
 
 export const RoleSchema = SchemaFactory.createForClass(Role);

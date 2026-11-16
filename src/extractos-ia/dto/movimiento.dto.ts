@@ -1,4 +1,5 @@
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { LadoAsiento } from '../../reglas-clasificacion/schemas/regla-clasificacion.schema';
 import { TipoMovimiento } from '../schemas/extracto-bancario.schema';
 
 /**
@@ -30,4 +31,13 @@ export class MovimientoDto {
   @IsOptional()
   @IsNumber()
   saldoDeclarado?: number;
+
+  /** Cuenta contable elegida a mano en "Asiento contable" — pisa a la regla. Va junto con `ladoAsiento`. */
+  @IsOptional()
+  @IsMongoId()
+  cuentaContableId?: string;
+
+  @IsOptional()
+  @IsEnum(LadoAsiento)
+  ladoAsiento?: LadoAsiento;
 }

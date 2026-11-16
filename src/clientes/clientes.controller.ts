@@ -36,6 +36,11 @@ export class ClientesController {
     private readonly historial: ClienteHistorialService,
   ) {}
 
+  /** Los movimientos de honorarios del historial solo los ve quien tiene Finanzas completo. */
+  private veFinanzas(user: AuthenticatedUser): boolean {
+    return user.roles.includes('admin') || user.permissions.includes(PERMISSIONS.FINANZAS_READ);
+  }
+
   @Get()
   @Permissions(PERMISSIONS.CLIENTES_READ)
   findAll(@Query() query: QueryClienteDto, @CurrentUser() user: AuthenticatedUser) {
@@ -46,14 +51,18 @@ export class ClientesController {
   @Get('actividad')
   @Permissions(PERMISSIONS.CLIENTES_READ)
   actividad(@Query() query: QueryActividadDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.historial.listarEstudio(new Types.ObjectId(user.estudioId), query);
+    return this.historial.listarEstudio(
+      new Types.ObjectId(user.estudioId),
+      query,
+      this.veFinanzas(user),
+    );
   }
 
   /** "Ver historial" del menú de Clientes — ver `ClienteHistorialService`. */
   @Get(':id/historial')
   @Permissions(PERMISSIONS.CLIENTES_READ)
   historialCliente(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.historial.listar(id, new Types.ObjectId(user.estudioId));
+    return this.historial.listar(id, new Types.ObjectId(user.estudioId), this.veFinanzas(user));
   }
 
   @Get(':id')

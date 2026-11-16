@@ -4,18 +4,46 @@ import { Model } from 'mongoose';
 import { Role, RoleDocument } from './schemas/role.schema';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
-import { DEFAULT_ROLE_PERMISSIONS } from '../common/constants/permissions';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  PERMISOS_AGREGADOS_DESPUES,
+} from '../common/constants/permissions';
 
 @Injectable()
 export class RolesService implements OnModuleInit {
   constructor(@InjectModel(Role.name) private readonly roleModel: Model<RoleDocument>) {}
 
-  /** Siembra los 3 roles de sistema si no existen todavía. */
+  /**
+   * Siembra los 3 roles de sistema si no existen todavía. A los que ya
+   * existían les agrega, una sola vez, los permisos que se sumaron después
+   * (`PERMISOS_AGREGADOS_DESPUES`).
+   */
   async onModuleInit(): Promise<void> {
     for (const [nombre, permisos] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+      const nuevos = permisos.filter((p) => PERMISOS_AGREGADOS_DESPUES.includes(p));
       const exists = await this.roleModel.findOne({ nombre }).exec();
       if (!exists) {
-        await this.roleModel.create({ nombre, permisos, esDeSistema: true });
+        await this.roleModel.create({
+          nombre,
+          permisos,
+          esDeSistema: true,
+          permisosSembrados: nuevos,
+        });
+        continue;
+      }
+      const faltantes = nuevos.filter((p) => !(exists.permisosSembrados ?? []).includes(p));
+      if (faltantes.length > 0) {
+        await this.roleModel
+          .updateOne(
+            { _id: exists._id },
+            {
+              $addToSet: {
+                permisos: { $each: faltantes },
+                permisosSembrados: { $each: faltantes },
+              },
+            },
+          )
+          .exec();
       }
     }
   }

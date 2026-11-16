@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 import { baseSchemaOptions } from '../../common/database/base-schema.options';
+import { LadoAsiento } from '../../reglas-clasificacion/schemas/regla-clasificacion.schema';
 
 export type ExtractoBancarioDocument = HydratedDocument<ExtractoBancario>;
 
@@ -76,6 +77,13 @@ export class MovimientoExtracto {
 
   @Prop({ type: String, enum: ValidacionSaldo, default: ValidacionSaldo.NO_APLICA })
   validacionSaldo: ValidacionSaldo;
+
+  /** Cuenta contable y lado (debe/haber) elegidos a mano por el contador para este movimiento — pisan a la regla. */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'CuentaContable' })
+  cuentaContableId?: Types.ObjectId;
+
+  @Prop({ type: String, enum: LadoAsiento })
+  ladoAsiento?: LadoAsiento;
 }
 
 export const MovimientoExtractoSchema = SchemaFactory.createForClass(MovimientoExtracto);

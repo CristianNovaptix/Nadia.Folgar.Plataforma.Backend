@@ -137,12 +137,22 @@ export class AsientoContableService {
       saldoCalculado: m.saldoCalculado,
     }));
 
-    const asignacionesMap = new Map<string, AsignacionManual>(
-      asignacionesManuales.map((a) => [
-        a.movimientoId,
-        { cuentaContableId: a.cuentaContableId, ladoAsiento: a.ladoAsiento },
-      ]),
-    );
+    // Primero lo guardado en cada movimiento; lo que llega en el pedido lo pisa.
+    const asignacionesMap = new Map<string, AsignacionManual>();
+    for (const m of extracto.movimientos) {
+      if (m.cuentaContableId && m.ladoAsiento) {
+        asignacionesMap.set(m._id!.toString(), {
+          cuentaContableId: m.cuentaContableId.toString(),
+          ladoAsiento: m.ladoAsiento,
+        });
+      }
+    }
+    for (const a of asignacionesManuales) {
+      asignacionesMap.set(a.movimientoId, {
+        cuentaContableId: a.cuentaContableId,
+        ladoAsiento: a.ladoAsiento,
+      });
+    }
 
     const asientosMensuales = construirAsientosMensuales(
       movimientos,
