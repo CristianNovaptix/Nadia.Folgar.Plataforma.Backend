@@ -366,6 +366,8 @@ export class FinanzasService {
           monto: a.monto,
           disponible: a.anulado ? 0 : a.disponible,
           fecha: a.fecha,
+          /** Mes para el que se pagó por adelantado; `null` = el próximo que se genere. */
+          periodo: a.periodo ?? null,
           medio: a.medio,
           nota: a.nota ?? null,
           registradoPorNombre: a.registradoPorNombre ?? null,
@@ -628,7 +630,10 @@ export class FinanzasService {
   /** Descuenta de una deuda lo que el cliente tenga a favor, del adelanto más viejo al más nuevo. */
   private async aplicarAdelantos(config: ConfigLean, deuda: DeudaLean): Promise<void> {
     const adelantos = [...(config.adelantos ?? [])]
-      .filter((a) => !a.anulado && a.disponible > 0)
+      // Lo pagado para un mes puntual no se gasta en meses anteriores a ese.
+      .filter(
+        (a) => !a.anulado && a.disponible > 0 && (!a.periodo || a.periodo <= deuda.periodo),
+      )
       .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
     let pagado = deuda.pagado;
     for (const adelanto of adelantos) {
@@ -911,8 +916,21 @@ export class FinanzasService {
       nombre: await this.nombreUsuario(user.userId),
     };
 
+    // Con mes elegido: paga ese mes y, si sobra, los que le siguen (nunca los anteriores).
+    const periodoActual = periodoDe(new Date());
+    if (dto.periodo && mesesEntre(periodoActual, dto.periodo) > 24) {
+      throw new BadRequestException('El mes elegido es demasiado lejano');
+    }
+    // Un mes futuro todavía no tiene deuda: queda a favor reservado para ese mes.
+    const periodoAdelanto = dto.periodo && dto.periodo > periodoActual ? dto.periodo : undefined;
+
     const impagas = await this.deudaModel
-      .find({ estudioId, clienteId: cliente._id, estado: { $ne: EstadoDeuda.PAGADA } })
+      .find({
+        estudioId,
+        clienteId: cliente._id,
+        estado: { $ne: EstadoDeuda.PAGADA },
+        ...(dto.periodo ? { periodo: { $gte: dto.periodo } } : {}),
+      })
       .sort({ periodo: 1 })
       .lean<DeudaLean[]>()
       .exec();
@@ -936,6 +954,7 @@ export class FinanzasService {
                 monto: resto,
                 disponible: resto,
                 fecha,
+                ...(periodoAdelanto ? { periodo: periodoAdelanto } : {}),
                 medio,
                 nota: dto.nota?.trim() || undefined,
                 registradoPor: quien.id,
@@ -955,8 +974,11 @@ export class FinanzasService {
         {
           tipo: EVENTO_FINANZAS.PAGO,
           descripcion:
-            `Pago adelantado de honorarios: ${pesos(resto)} por ${MEDIO_LABEL[medio]} — ` +
-            'queda a favor y se descuenta de los próximos meses',
+            `Pago adelantado de honorarios${periodoAdelanto ? ` de ${nombrePeriodo(periodoAdelanto)}` : ''}: ` +
+            `${pesos(resto)} por ${MEDIO_LABEL[medio]} — ` +
+            (periodoAdelanto
+              ? `queda a favor y se descuenta desde ${nombrePeriodo(periodoAdelanto)}`
+              : `queda a favor y se descuenta desde ${nombrePeriodo(sumarMeses(periodoActual, 1))}`),
         },
         user.userId,
       );

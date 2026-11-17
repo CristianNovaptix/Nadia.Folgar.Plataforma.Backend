@@ -96,6 +96,14 @@ export class RegistrarPagoDto {
   @IsString()
   @MaxLength(300)
   nota?: string;
+
+  /**
+   * Mes al que corresponde el pago (solo en el pago del cliente). Si paga de más,
+   * lo que sobra pasa a los meses que le siguen. Un mes futuro = pago por adelantado.
+   */
+  @IsOptional()
+  @Matches(PERIODO, { message: PERIODO_MSG })
+  periodo?: string;
 }
 
 export class AnularPagoDto {

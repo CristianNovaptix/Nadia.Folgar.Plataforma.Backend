@@ -22,6 +22,13 @@ export class AdelantoHonorario {
   @Prop({ required: true })
   fecha: Date;
 
+  /**
+   * Mes ("AAAA-MM") para el que se pagó por adelantado: no se descuenta de
+   * deudas de meses anteriores a ese. Sin cargar = se usa en la próxima deuda.
+   */
+  @Prop()
+  periodo?: string;
+
   @Prop({ type: String, default: 'transferencia' })
   medio: string;
 

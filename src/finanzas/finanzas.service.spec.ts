@@ -380,6 +380,57 @@ describe('FinanzasService (base en memoria)', () => {
     ]);
   });
 
+  it('un pago con mes elegido paga ese mes, lo que sobra pasa al siguiente y el adelantado espera a su mes', async () => {
+    await service.guardar(clienteA.toString(), { abono: 100 }, contadora);
+    const anterior = sumarMeses(periodo, -1);
+    await deudaModel.collection.insertOne({
+      clienteId: clienteA,
+      estudioId,
+      periodo: anterior,
+      monto: 80,
+      pagado: 0,
+      estado: 'pendiente',
+      pagos: [],
+      origen: 'manual',
+    });
+    await service.generarDeudasManual(periodo, clienteA.toString(), contadora);
+
+    // Paga 130 para el mes en curso: lo cubre y 30 quedan a favor; el mes viejo no se toca.
+    let detalle = await service.registrarPagoCliente(
+      clienteA.toString(),
+      { monto: 130, periodo },
+      contadora,
+    );
+    const porMes = (p: string) => detalle.deudas.find((d) => d.periodo === p)!;
+    expect(porMes(periodo)).toMatchObject({ pagado: 100, estado: 'pagada' });
+    expect(porMes(anterior)).toMatchObject({ pagado: 0, estado: 'pendiente' });
+    expect(detalle.saldoAFavor).toBe(30);
+    expect(detalle.adelantos[0].periodo).toBeNull();
+
+    // Pago por adelantado para dentro de dos meses: queda reservado para ese mes.
+    const enDos = sumarMeses(periodo, 2);
+    detalle = await service.registrarPagoCliente(
+      clienteA.toString(),
+      { monto: 100, periodo: enDos },
+      contadora,
+    );
+    expect(detalle.saldoAFavor).toBe(130);
+    expect(detalle.adelantos.some((a) => a.periodo === enDos && a.disponible === 100)).toBe(true);
+
+    // El mes que viene usa solo los 30 que sobraron; el adelantado sigue entero.
+    const siguiente = sumarMeses(periodo, 1);
+    await service.generarDeudas(siguiente, { origen: 'automatica' });
+    detalle = await service.detalle(clienteA.toString(), contadora);
+    expect(porMes(siguiente)).toMatchObject({ pagado: 30, saldo: 70, estado: 'parcial' });
+    expect(detalle.saldoAFavor).toBe(100);
+
+    // Y en su mes se descuenta solo.
+    await service.generarDeudas(enDos, { origen: 'automatica' });
+    detalle = await service.detalle(clienteA.toString(), contadora);
+    expect(porMes(enDos)).toMatchObject({ pagado: 100, estado: 'pagada' });
+    expect(detalle.saldoAFavor).toBe(0);
+  });
+
   it('un pago del cliente cancela primero lo más viejo y lo que sobra queda a favor', async () => {
     await service.guardar(clienteA.toString(), { abono: 100 }, contadora);
     const anterior = sumarMeses(periodo, -1);
