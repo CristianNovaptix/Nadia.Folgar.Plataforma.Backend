@@ -8,9 +8,11 @@ import { Logger } from 'nestjs-pino';
 import helmet from '@fastify/helmet';
 import { AppModule } from './app.module';
 import { parseCorsOrigins } from './config/cors-origins';
+import { applyDnsFallback } from './config/dns-fallback';
 
 async function bootstrap(): Promise<void> {
   console.log('[bootstrap] Iniciando API Nadia Folgar...');
+  applyDnsFallback();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     // bodyLimit por encima del default de Fastify (1 MB): portal-clientes
