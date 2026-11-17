@@ -380,6 +380,78 @@ describe('FinanzasService (base en memoria)', () => {
     ]);
   });
 
+  it('un pago del cliente cancela primero lo más viejo y lo que sobra queda a favor', async () => {
+    await service.guardar(clienteA.toString(), { abono: 100 }, contadora);
+    const anterior = sumarMeses(periodo, -1);
+    await deudaModel.collection.insertOne({
+      clienteId: clienteA,
+      estudioId,
+      periodo: anterior,
+      monto: 80,
+      pagado: 0,
+      estado: 'pendiente',
+      pagos: [],
+      origen: 'manual',
+    });
+    await service.generarDeudasManual(periodo, clienteA.toString(), contadora);
+
+    // Paga 120: 80 del mes viejo y 40 del mes en curso.
+    let detalle = await service.registrarPagoCliente(
+      clienteA.toString(),
+      { monto: 120, medio: 'efectivo' as never },
+      colaborador,
+    );
+    const porMes = (p: string) => detalle.deudas.find((d) => d.periodo === p)!;
+    expect(porMes(anterior)).toMatchObject({ pagado: 80, estado: 'pagada' });
+    expect(porMes(periodo)).toMatchObject({ pagado: 40, saldo: 60, estado: 'parcial' });
+    expect(detalle.saldoAFavor).toBe(0);
+
+    // Paga 200: 60 cierran el mes y 140 quedan a favor (pago adelantado).
+    detalle = await service.registrarPagoCliente(clienteA.toString(), { monto: 200 }, contadora);
+    expect(porMes(periodo)).toMatchObject({ pagado: 100, estado: 'pagada' });
+    expect(detalle).toMatchObject({ saldoPendiente: 0, saldoAFavor: 140 });
+    expect(detalle.adelantos[0]).toMatchObject({ monto: 140, disponible: 140, anulado: false });
+    const fila = (await service.listar(contadora)).clientes.find(
+      (c) => c.cliente.nombre === 'Alfa SA',
+    )!;
+    expect(fila.saldoAFavor).toBe(140);
+    // Lo adelantado cuenta como plata que entró este mes.
+    const m = await service.metricas(contadora);
+    expect(m.mes.ingresado).toBe(320);
+    expect(m.saldoAFavorTotal).toBe(140);
+
+    // La deuda del mes siguiente nace con el adelanto ya descontado.
+    const siguiente = sumarMeses(periodo, 1);
+    await service.generarDeudas(siguiente, { origen: 'automatica' });
+    detalle = await service.detalle(clienteA.toString(), contadora);
+    expect(porMes(siguiente)).toMatchObject({ monto: 100, pagado: 100, estado: 'pagada' });
+    expect(porMes(siguiente).pagos[0].nota).toContain('Pago adelantado del');
+    expect(detalle.saldoAFavor).toBe(40);
+    expect(detalle.adelantos[0]).toMatchObject({ monto: 140, disponible: 40 });
+
+    // Lo que no se usó se puede anular (nunca borrar), una sola vez.
+    const adelantoId = detalle.adelantos[0]._id;
+    detalle = await service.anularAdelanto(
+      clienteA.toString(),
+      adelantoId,
+      { motivo: 'Se devolvió' },
+      contadora,
+    );
+    expect(detalle.saldoAFavor).toBe(0);
+    expect(detalle.adelantos[0]).toMatchObject({
+      anulado: true,
+      montoAnulado: 40,
+      motivoAnulacion: 'Se devolvió',
+    });
+    await expect(
+      service.anularAdelanto(clienteA.toString(), adelantoId, { motivo: 'Otra' }, contadora),
+    ).rejects.toThrow('ya estaba anulado');
+
+    // Sin ninguna deuda pendiente, todo el pago queda a favor.
+    detalle = await service.registrarPagoCliente(clienteB.toString(), { monto: 50 }, contadora);
+    expect(detalle).toMatchObject({ abono: 0, saldoAFavor: 50 });
+  });
+
   it('el colaborador solo ve y cobra a los clientes que tiene a cargo', async () => {
     await service.guardar(clienteA.toString(), { abono: 100 }, contadora);
     await service.guardar(clienteB.toString(), { abono: 200 }, contadora);
@@ -438,8 +510,12 @@ describe('FinanzasService (base en memoria)', () => {
     expect(m.antiguedad.map((t) => t.monto)).toEqual([360, 0, 0, 250]);
     expect(m.deudores[0]).toMatchObject({ nombre: 'Beta SRL', saldo: 550, periodos: 2 });
     // Desde enero del año anterior hasta el mes en curso.
-    expect(m.evolucion).toHaveLength(12 + Number(periodo.split('-')[1]));
-    expect(m.evolucion[0].periodo).toBe(`${Number(periodo.slice(0, 4)) - 1}-01`);
+    // Arranca en el primer mes con datos (la deuda de hace 3 meses), no en meses vacíos.
+    expect(m.evolucion).toHaveLength(4);
+    expect(m.evolucion[0].periodo).toBe(sumarMeses(periodo, -3));
+    // Sin ningún dato, queda solo el mes en curso.
+    await deudaModel.collection.deleteMany({});
+    expect((await service.metricas(contadora)).evolucion.map((e) => e.periodo)).toEqual([periodo]);
     expect(m.detalleClientes.map((c) => c.nombre)).toEqual(['Alfa SA', 'Beta SRL', 'Gama']);
     expect(m.detalleClientes[0]).toMatchObject({
       activo: true,
@@ -544,8 +620,11 @@ describe('FinanzasService (base en memoria)', () => {
     await service.generarDeudasManual(periodo, clienteA.toString(), contadora);
 
     let detalle = await service.detalle(clienteA.toString(), contadora);
-    // Generada a mano hoy: el vencimiento nunca queda en el pasado.
-    expect(new Date(detalle.deudas[0].fechaVencimiento!).getTime()).toBeGreaterThan(Date.now());
+    // El plazo es siempre el del mes de la deuda, aunque se genere con el mes avanzado.
+    expect(new Date(detalle.deudas[0].fechaInicioPago!)).toEqual(plazoDePago(periodo, 1, 10).inicio);
+    expect(new Date(detalle.deudas[0].fechaVencimiento!)).toEqual(plazoDePago(periodo, 1, 10).fin);
+    await deudaModel.updateOne({}, { $set: { fechaVencimiento: new Date(Date.now() + 60000) } });
+    detalle = await service.detalle(clienteA.toString(), contadora);
     expect(detalle.deudas[0].vencida).toBe(false);
     expect(detalle.saldoVencido).toBe(0);
 

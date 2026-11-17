@@ -59,6 +59,31 @@ export class FinanzasController {
     return this.finanzasService.guardar(clienteId, dto, user);
   }
 
+  /**
+   * Pago del cliente sin elegir mes: cancela primero lo más viejo que deba y,
+   * si sobra, queda a favor para los próximos meses (pago adelantado).
+   */
+  @Post('honorarios/:clienteId/pagos')
+  registrarPagoCliente(
+    @Param('clienteId') clienteId: string,
+    @Body() dto: RegistrarPagoDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.finanzasService.registrarPagoCliente(clienteId, dto, user);
+  }
+
+  /** Anula lo que todavía no se usó de un pago adelantado. */
+  @Patch('honorarios/:clienteId/adelantos/:adelantoId/anular')
+  @Permissions(PERMISSIONS.FINANZAS_WRITE)
+  anularAdelanto(
+    @Param('clienteId') clienteId: string,
+    @Param('adelantoId') adelantoId: string,
+    @Body() dto: AnularPagoDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.finanzasService.anularAdelanto(clienteId, adelantoId, dto, user);
+  }
+
   @Post('deudas/generar')
   @Permissions(PERMISSIONS.FINANZAS_WRITE)
   generarDeudas(@Body() dto: GenerarDeudasDto, @CurrentUser() user: AuthenticatedUser) {

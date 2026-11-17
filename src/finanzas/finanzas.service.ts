@@ -39,7 +39,11 @@ import {
   EstadoDeuda,
   MedioPago,
 } from './schemas/deuda-honorario.schema';
-import { HonorarioConfig, HonorarioConfigDocument } from './schemas/honorario-config.schema';
+import {
+  AdelantoHonorario,
+  HonorarioConfig,
+  HonorarioConfigDocument,
+} from './schemas/honorario-config.schema';
 
 /** Tipos de evento que Finanzas deja en el historial del cliente. */
 export const EVENTO_FINANZAS = {
@@ -123,6 +127,16 @@ export function armarHistorialAbonos(cambios: CambioAbono[], hoy: Date = new Dat
 type Ref = { _id: Types.ObjectId; nombre: string };
 type ClienteBasico = { _id: Types.ObjectId; nombre: string; cuit: string; activo?: boolean };
 type DeudaLean = DeudaHonorario & { _id: Types.ObjectId; createdAt?: Date };
+type ConfigLean = HonorarioConfig & { _id: Types.ObjectId };
+
+/** Lo que el cliente tiene a favor: pagos adelantados que todavía no se usaron. */
+export function saldoAFavorDe(config?: { adelantos?: AdelantoHonorario[] } | null): number {
+  return redondear(
+    (config?.adelantos ?? [])
+      .filter((a) => !a.anulado)
+      .reduce((s, a) => s + (a.disponible ?? 0), 0),
+  );
+}
 
 function refDe(valor: unknown): { _id: string; nombre: string } | null {
   if (valor && typeof valor === 'object' && 'nombre' in valor) {
@@ -281,6 +295,8 @@ export class FinanzasService {
           diaEmision: config?.diaEmision ?? null,
           diaInicioPago: config?.diaInicioPago ?? DIA_INICIO_PAGO_DEFECTO,
           diaVencimiento: config?.diaVencimiento ?? DIA_VENCIMIENTO_DEFECTO,
+          /** Pagos adelantados que todavía no se descontaron de ninguna deuda. */
+          saldoAFavor: saldoAFavorDe(config),
           saldoPendiente: redondear(impagas.reduce((s, d) => s + (d.monto - d.pagado), 0)),
           /** Parte de lo que debe que ya pasó su vencimiento. */
           saldoVencido: redondear(
@@ -342,6 +358,23 @@ export class FinanzasService {
       ),
       historialAbonos: armarHistorialAbonos(cambios),
       saldoPendiente: redondear(deudas.reduce((s, d) => s + (d.monto - d.pagado), 0)),
+      saldoAFavor: saldoAFavorDe(config),
+      adelantos: [...(config?.adelantos ?? [])]
+        .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())
+        .map((a) => ({
+          _id: a._id.toString(),
+          monto: a.monto,
+          disponible: a.anulado ? 0 : a.disponible,
+          fecha: a.fecha,
+          medio: a.medio,
+          nota: a.nota ?? null,
+          registradoPorNombre: a.registradoPorNombre ?? null,
+          anulado: Boolean(a.anulado),
+          montoAnulado: a.montoAnulado ?? null,
+          anuladoPorNombre: a.anuladoPorNombre ?? null,
+          anuladoEn: a.anuladoEn ?? null,
+          motivoAnulacion: a.motivoAnulacion ?? null,
+        })),
       deudas: deudas.map((d) => ({
         _id: d._id.toString(),
         periodo: d.periodo,
@@ -513,7 +546,7 @@ export class FinanzasService {
     if (opciones.clienteId) filtroConfig.clienteId = opciones.clienteId;
     if (opciones.soloConAbonoPrevio) filtroConfig.abonoDesde = { $lt: inicioDePeriodo(periodo) };
 
-    const configs = await this.configModel.find(filtroConfig).lean<HonorarioConfig[]>().exec();
+    const configs = await this.configModel.find(filtroConfig).lean<ConfigLean[]>().exec();
     if (configs.length === 0) return { creadas: 0, yaExistian: 0 };
 
     const clienteIds = configs.map((c) => c.clienteId);
@@ -532,18 +565,15 @@ export class FinanzasService {
     const esActivo = new Set(activos.map((c) => c._id.toString()));
     const yaTiene = new Set(existentes.map((d) => d.clienteId.toString()));
 
-    // Plazo de pago del cliente (por defecto del 1 al 10). Si al generarla ese plazo ya
-    // terminó (deuda generada a mano con el mes avanzado), corre el del mes siguiente:
-    // nunca nace vencida.
-    const ahora = new Date();
-    const plazo = (config: HonorarioConfig): { inicio: Date; fin: Date } => {
-      const desde = config.diaInicioPago ?? DIA_INICIO_PAGO_DEFECTO;
-      const hasta = config.diaVencimiento ?? DIA_VENCIMIENTO_DEFECTO;
-      const delMes = plazoDePago(periodo, desde, hasta);
-      return delMes.fin.getTime() < ahora.getTime()
-        ? plazoDePago(sumarMeses(periodoDe(ahora), 1), desde, hasta)
-        : delMes;
-    };
+    // Plazo de pago del cliente (por defecto del 1 al 10), siempre el del mes de la
+    // deuda: la de noviembre se paga en noviembre aunque se genere con el mes avanzado
+    // (en ese caso puede nacer ya vencida; pedido explícito del usuario).
+    const plazo = (config: HonorarioConfig): { inicio: Date; fin: Date } =>
+      plazoDePago(
+        periodo,
+        config.diaInicioPago ?? DIA_INICIO_PAGO_DEFECTO,
+        config.diaVencimiento ?? DIA_VENCIMIENTO_DEFECTO,
+      );
 
     let creadas = 0;
     let yaExistian = 0;
@@ -554,8 +584,9 @@ export class FinanzasService {
         yaExistian += 1;
         continue;
       }
+      let nueva: DeudaLean;
       try {
-        await this.deudaModel.create({
+        const creada = await this.deudaModel.create({
           clienteId: config.clienteId,
           estudioId: config.estudioId,
           periodo,
@@ -569,6 +600,7 @@ export class FinanzasService {
           fechaVencimiento: plazo(config).fin,
           origen: opciones.origen,
         });
+        nueva = creada.toObject() as DeudaLean;
       } catch (err) {
         // Otra corrida la creó al mismo tiempo: el índice único la frenó, no es un error.
         if ((err as { code?: number }).code === 11000) {
@@ -587,8 +619,60 @@ export class FinanzasService {
         },
         opciones.usuarioId,
       );
+      // Si pagó por adelantado, se descuenta sola de esta deuda.
+      await this.aplicarAdelantos(config, nueva);
     }
     return { creadas, yaExistian };
+  }
+
+  /** Descuenta de una deuda lo que el cliente tenga a favor, del adelanto más viejo al más nuevo. */
+  private async aplicarAdelantos(config: ConfigLean, deuda: DeudaLean): Promise<void> {
+    const adelantos = [...(config.adelantos ?? [])]
+      .filter((a) => !a.anulado && a.disponible > 0)
+      .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+    let pagado = deuda.pagado;
+    for (const adelanto of adelantos) {
+      const saldo = redondear(deuda.monto - pagado);
+      if (saldo <= 0) break;
+      const parte = redondear(Math.min(adelanto.disponible, saldo));
+      // El filtro por `disponible` evita usar dos veces la misma plata.
+      const usado = await this.configModel
+        .updateOne(
+          {
+            _id: config._id,
+            adelantos: {
+              $elemMatch: { _id: adelanto._id, disponible: adelanto.disponible, anulado: { $ne: true } },
+            },
+          },
+          { $set: { 'adelantos.$.disponible': redondear(adelanto.disponible - parte) } },
+        )
+        .exec();
+      if (usado.modifiedCount === 0) continue;
+      try {
+        pagado = await this.imputar(
+          { ...deuda, pagado },
+          parte,
+          {
+            fecha: new Date(adelanto.fecha),
+            medio: (adelanto.medio as MedioPago) ?? MedioPago.TRANSFERENCIA,
+            nota:
+              `Pago adelantado del ${fechaCorta(new Date(adelanto.fecha))}` +
+              (adelanto.nota ? ` — ${adelanto.nota}` : ''),
+          },
+          { id: adelanto.registradoPor, nombre: adelanto.registradoPorNombre },
+        );
+      } catch (err) {
+        // No se pudo descontar: la plata vuelve a quedar a favor, no se pierde.
+        await this.configModel
+          .updateOne(
+            { _id: config._id, 'adelantos._id': adelanto._id },
+            { $inc: { 'adelantos.$.disponible': parte } },
+          )
+          .exec();
+        this.logger.error(`No se pudo aplicar un pago adelantado: ${(err as Error).message}`);
+        break;
+      }
+    }
   }
 
   /** Botón "Generar deuda": de un cliente puntual o de todos los que falten. */
@@ -726,7 +810,8 @@ export class FinanzasService {
     if (saldo <= 0) throw new BadRequestException('Esta deuda ya está pagada');
     if (monto > saldo) {
       throw new BadRequestException(
-        `El pago (${pesos(monto)}) supera lo que falta cobrar (${pesos(saldo)})`,
+        `El pago (${pesos(monto)}) supera lo que falta cobrar (${pesos(saldo)}) de ese mes. ` +
+          'Para un pago adelantado usá "Registrar pago" del cliente.',
       );
     }
     const fecha = fechaDePago(dto.fecha);
@@ -735,9 +820,24 @@ export class FinanzasService {
       throw new BadRequestException('La fecha del pago no puede ser futura');
     }
 
+    await this.imputar(
+      deuda,
+      monto,
+      { fecha, medio: dto.medio ?? MedioPago.TRANSFERENCIA, nota: dto.nota },
+      { id: new Types.ObjectId(user.userId), nombre: await this.nombreUsuario(user.userId) },
+    );
+    return this.detalle(cliente._id.toString(), user);
+  }
+
+  /** Guarda un pago dentro de la deuda de un mes y lo deja en el historial. Devuelve lo pagado. */
+  private async imputar(
+    deuda: DeudaLean,
+    monto: number,
+    datos: { fecha: Date; medio: MedioPago; nota?: string },
+    quien: { id?: Types.ObjectId; nombre?: string },
+  ): Promise<number> {
     const pagado = redondear(deuda.pagado + monto);
     const estado = estadoDe(deuda.monto, pagado);
-    const medio = dto.medio ?? MedioPago.TRANSFERENCIA;
     const ahora = new Date();
 
     // El filtro por `pagado` evita que dos pagos cargados a la vez se pisen.
@@ -749,11 +849,11 @@ export class FinanzasService {
             pagos: {
               _id: new Types.ObjectId(),
               monto,
-              fecha,
-              medio,
-              nota: dto.nota?.trim() || undefined,
-              registradoPor: new Types.ObjectId(user.userId),
-              registradoPorNombre: await this.nombreUsuario(user.userId),
+              fecha: datos.fecha,
+              medio: datos.medio,
+              nota: datos.nota?.trim() || undefined,
+              registradoPor: quien.id,
+              registradoPorNombre: quien.nombre,
               registradoEn: ahora,
               anulado: false,
             },
@@ -774,20 +874,149 @@ export class FinanzasService {
     }
 
     await this.historial.registrar(
-      cliente._id,
+      deuda.clienteId,
       deuda.estudioId,
       {
         tipo: EVENTO_FINANZAS.PAGO,
         descripcion:
           `Pago ${estado === EstadoDeuda.PAGADA ? 'total' : 'parcial'} de honorarios de ` +
-          `${nombrePeriodo(deuda.periodo)}: ${pesos(monto)} por ${MEDIO_LABEL[medio]}` +
+          `${nombrePeriodo(deuda.periodo)}: ${pesos(monto)} por ${MEDIO_LABEL[datos.medio] ?? datos.medio}` +
           (estado === EstadoDeuda.PAGADA
             ? ' — deuda saldada'
             : ` — falta cobrar ${pesos(redondear(deuda.monto - pagado))}`),
       },
+      quien.id?.toString(),
+    );
+    return pagado;
+  }
+
+  /**
+   * Pago del cliente sin elegir un mes: cancela primero la deuda más vieja
+   * (criterio contable habitual) y sigue con las siguientes. Si paga más de
+   * lo que debe, lo que sobra queda a favor y se descuenta solo de los
+   * próximos meses (pago adelantado).
+   */
+  async registrarPagoCliente(clienteId: string, dto: RegistrarPagoDto, user: AuthenticatedUser) {
+    const cliente = await this.clienteAccesible(clienteId, user);
+    const estudioId = new Types.ObjectId(user.estudioId);
+    const monto = redondear(dto.monto);
+    const fecha = fechaDePago(dto.fecha);
+    if (Number.isNaN(fecha.getTime())) throw new BadRequestException('Fecha de pago inválida');
+    if (fecha.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+      throw new BadRequestException('La fecha del pago no puede ser futura');
+    }
+    const medio = dto.medio ?? MedioPago.TRANSFERENCIA;
+    const quien = {
+      id: new Types.ObjectId(user.userId),
+      nombre: await this.nombreUsuario(user.userId),
+    };
+
+    const impagas = await this.deudaModel
+      .find({ estudioId, clienteId: cliente._id, estado: { $ne: EstadoDeuda.PAGADA } })
+      .sort({ periodo: 1 })
+      .lean<DeudaLean[]>()
+      .exec();
+    let resto = monto;
+    for (const deuda of impagas) {
+      if (resto <= 0) break;
+      const parte = redondear(Math.min(resto, deuda.monto - deuda.pagado));
+      if (parte <= 0) continue;
+      await this.imputar(deuda, parte, { fecha, medio, nota: dto.nota }, quien);
+      resto = redondear(resto - parte);
+    }
+
+    if (resto > 0) {
+      await this.configModel
+        .updateOne(
+          { estudioId, clienteId: cliente._id },
+          {
+            $push: {
+              adelantos: {
+                _id: new Types.ObjectId(),
+                monto: resto,
+                disponible: resto,
+                fecha,
+                medio,
+                nota: dto.nota?.trim() || undefined,
+                registradoPor: quien.id,
+                registradoPorNombre: quien.nombre,
+                registradoEn: new Date(),
+                anulado: false,
+              },
+            },
+            $setOnInsert: { abono: 0 },
+          },
+          { upsert: true },
+        )
+        .exec();
+      await this.historial.registrar(
+        cliente._id,
+        estudioId,
+        {
+          tipo: EVENTO_FINANZAS.PAGO,
+          descripcion:
+            `Pago adelantado de honorarios: ${pesos(resto)} por ${MEDIO_LABEL[medio]} — ` +
+            'queda a favor y se descuenta de los próximos meses',
+        },
+        user.userId,
+      );
+    }
+    return this.detalle(cliente._id.toString(), user);
+  }
+
+  /** Anula lo que todavía no se usó de un pago adelantado. Lo ya descontado se anula en su mes. */
+  async anularAdelanto(
+    clienteId: string,
+    adelantoId: string,
+    dto: AnularPagoDto,
+    user: AuthenticatedUser,
+  ) {
+    const cliente = await this.clienteAccesible(clienteId, user);
+    const estudioId = new Types.ObjectId(user.estudioId);
+    const config = await this.configModel
+      .findOne({ estudioId, clienteId: cliente._id })
+      .lean<ConfigLean>()
+      .exec();
+    const adelanto = (config?.adelantos ?? []).find((a) => a._id.toString() === adelantoId);
+    if (!config || !adelanto) throw new NotFoundException('Pago adelantado no encontrado');
+    if (adelanto.anulado) throw new BadRequestException('Ese pago adelantado ya estaba anulado');
+    if (adelanto.disponible <= 0) {
+      throw new BadRequestException(
+        'Ese pago adelantado ya se descontó entero. Anulá el pago en el mes donde se aplicó.',
+      );
+    }
+    const hecho = await this.configModel
+      .updateOne(
+        {
+          _id: config._id,
+          adelantos: { $elemMatch: { _id: adelanto._id, disponible: adelanto.disponible } },
+        },
+        {
+          $set: {
+            'adelantos.$.anulado': true,
+            'adelantos.$.disponible': 0,
+            'adelantos.$.montoAnulado': adelanto.disponible,
+            'adelantos.$.anuladoPorNombre': await this.nombreUsuario(user.userId),
+            'adelantos.$.anuladoEn': new Date(),
+            'adelantos.$.motivoAnulacion': dto.motivo.trim(),
+          },
+        },
+      )
+      .exec();
+    if (hecho.modifiedCount === 0) {
+      throw new ConflictException('Ese pago cambió recién. Actualizá la pantalla y probá de nuevo.');
+    }
+    await this.historial.registrar(
+      cliente._id,
+      estudioId,
+      {
+        tipo: EVENTO_FINANZAS.PAGO_ANULADO,
+        descripcion:
+          `Se anuló un pago adelantado de honorarios (${pesos(adelanto.disponible)} sin usar). ` +
+          `Motivo: ${dto.motivo.trim()}`,
+      },
       user.userId,
     );
-
     return this.detalle(cliente._id.toString(), user);
   }
 
@@ -974,6 +1203,28 @@ export class FinanzasService {
       saldoPorCliente.set(clave, acumulado);
     }
 
+    // Pagos adelantados todavía sin descontar: también entraron en su mes.
+    let saldoAFavorTotal = 0;
+    for (const config of configs) {
+      if (!clientePorId.has(config.clienteId.toString())) continue;
+      for (const adelanto of config.adelantos ?? []) {
+        if (adelanto.anulado || adelanto.disponible <= 0) continue;
+        saldoAFavorTotal += adelanto.disponible;
+        const mesPago = periodoDe(new Date(adelanto.fecha));
+        const filaPago = evolucion.get(mesPago);
+        if (filaPago) filaPago.cobrado = redondear(filaPago.cobrado + adelanto.disponible);
+        if (mesPago === periodo) cobradoEnElMes += adelanto.disponible;
+      }
+    }
+
+    // Las estadísticas arrancan en el primer mes que tiene datos: los meses de antes de
+    // usar la plataforma quedarían vacíos (pedido explícito del usuario).
+    const conDatos = meses.filter((m) => {
+      const fila = evolucion.get(m)!;
+      return fila.generado > 0 || fila.cobrado > 0;
+    });
+    const mesesConDatos = meses.slice(conDatos.length ? meses.indexOf(conDatos[0]) : meses.length - 1);
+
     const deudores = [...saldoPorCliente.entries()]
       .map(([clienteId, v]) => ({
         clienteId,
@@ -1002,13 +1253,15 @@ export class FinanzasService {
         /** Todo lo que entró este mes, sea de la deuda de este mes o de meses anteriores. */
         ingresado: redondear(cobradoEnElMes),
       },
+      /** Pagos adelantados de clientes que todavía no se descontaron de ninguna deuda. */
+      saldoAFavorTotal: redondear(saldoAFavorTotal),
       deudaTotal: redondear(deudaTotal),
       deudaAtrasada: redondear(deudaAtrasada),
       /** Deuda que ya pasó su fecha de vencimiento. */
       deudaVencida: redondear(deudaVencida),
       clientesConDeuda: deudores.length,
       antiguedad: tramos,
-      evolucion: meses.map((m) => evolucion.get(m)!),
+      evolucion: mesesConDatos.map((m) => evolucion.get(m)!),
       deudores: deudores.slice(0, 8),
       /** Un renglón por cliente, para el detalle de cada índice. */
       detalleClientes: clientes
@@ -1023,6 +1276,7 @@ export class FinanzasService {
             abono: config?.abono ?? 0,
             facturador: refDe(config?.facturadorId)?.nombre ?? null,
             saldo: saldoPorCliente.get(clave)?.saldo ?? 0,
+            saldoAFavor: saldoAFavorDe(config),
             saldoVencido: vencidoPorCliente.get(clave) ?? 0,
             periodosAdeudados: saldoPorCliente.get(clave)?.periodos ?? 0,
             mesGenerado: mesCliente?.generado ?? null,

@@ -5,6 +5,58 @@ import { baseSchemaOptions } from '../../common/database/base-schema.options';
 export type HonorarioConfigDocument = HydratedDocument<HonorarioConfig>;
 
 /**
+ * Plata que el cliente pagó de más o por adelantado: queda "a favor" y se
+ * descuenta sola de las próximas deudas. `disponible` es lo que todavía no
+ * se usó. Nunca se borra: si se cargó mal, se anula con motivo.
+ */
+@Schema()
+export class AdelantoHonorario {
+  _id: Types.ObjectId;
+
+  @Prop({ required: true, min: 0.01 })
+  monto: number;
+
+  @Prop({ required: true, min: 0 })
+  disponible: number;
+
+  @Prop({ required: true })
+  fecha: Date;
+
+  @Prop({ type: String, default: 'transferencia' })
+  medio: string;
+
+  @Prop({ trim: true })
+  nota?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  registradoPor?: Types.ObjectId;
+
+  @Prop({ trim: true })
+  registradoPorNombre?: string;
+
+  @Prop({ required: true })
+  registradoEn: Date;
+
+  @Prop({ default: false })
+  anulado: boolean;
+
+  /** Cuánto quedaba sin usar cuando se anuló. */
+  @Prop()
+  montoAnulado?: number;
+
+  @Prop({ trim: true })
+  anuladoPorNombre?: string;
+
+  @Prop()
+  anuladoEn?: Date;
+
+  @Prop({ trim: true })
+  motivoAnulacion?: string;
+}
+
+export const AdelantoHonorarioSchema = SchemaFactory.createForClass(AdelantoHonorario);
+
+/**
  * Cuánto se le cobra por mes a un cliente ("abono"), quién le factura y qué
  * día del mes se emite la factura. Una sola por cliente. El abono vale para
  * todos los meses siguientes hasta que se vuelva a editar; cada cambio queda
@@ -44,6 +96,10 @@ export class HonorarioConfig {
    */
   @Prop({ min: 1, max: 31 })
   diaVencimiento?: number;
+
+  /** Pagos adelantados / saldo a favor del cliente. */
+  @Prop({ type: [AdelantoHonorarioSchema], default: [] })
+  adelantos: AdelantoHonorario[];
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Estudio', required: true, index: true })
   estudioId: Types.ObjectId;

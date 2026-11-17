@@ -9,6 +9,7 @@ export enum RegimenFiscal {
   RESPONSABLE_INSCRIPTO = 'responsable_inscripto',
   MONOTRIBUTO = 'monotributo',
   EXENTO = 'exento',
+  CONSUMIDOR_FINAL = 'consumidor_final',
 }
 
 /**
@@ -38,7 +39,12 @@ export class Cliente {
   @Prop({ required: true, trim: true })
   nombre: string;
 
-  @Prop({ required: true, unique: true })
+  /**
+   * Único cuando está cargado. Puede faltar: excepción pedida por el usuario para
+   * clientes importados de la planilla del estudio sin CUIT (se completa después).
+   * El alta por la plataforma lo sigue exigiendo (`CreateClienteDto`).
+   */
+  @Prop({ unique: true, sparse: true })
   cuit: string;
 
   @Prop({ trim: true })

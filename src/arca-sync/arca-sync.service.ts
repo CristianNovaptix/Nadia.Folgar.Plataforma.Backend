@@ -161,7 +161,7 @@ export class ArcaSyncService {
   }
 
   private toResumen(cliente: ClienteDocument, sync?: ArcaSincronizacionDocument): ClienteArcaResumen {
-    const cuitPropio = (cliente.credencialesArca?.usuario ?? cliente.cuit).replace(/\D/g, '');
+    const cuitPropio = (cliente.credencialesArca?.usuario ?? cliente.cuit ?? '').replace(/\D/g, '');
     return {
       clienteId: cliente._id.toString(),
       nombre: cliente.nombre,
